@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   UploadCloud,
   TrendingUp,
@@ -12,7 +12,16 @@ import {
   RefreshCw,
   MapPin,
   ChevronRight,
-  Info
+  Info,
+  Database,
+  Cloud,
+  CloudOff,
+  CloudLightning,
+  Trash2,
+  FileSpreadsheet,
+  Eye,
+  CheckCircle2,
+  ArrowUpRight
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -29,6 +38,16 @@ import {
 } from "recharts";
 import { parseTrafficCSV, ParsedTrafficData, Snapshot } from "../utils/csvParser";
 import { SAMPLE_TRAFFIC_CSV } from "../utils/sampleData";
+import { getFirebaseInstances, getFirebaseConfig } from "../firebase";
+import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
+
+interface UnifiedLedger {
+  filename: string;
+  size: number;
+  uploadedAt: string;
+  source: "local" | "cloud" | "synced";
+  csvData?: string;
+}
 
 // Helper to format vehicle types nicely for display
 const formatVehicleType = (type: string): string => {
@@ -47,6 +66,213 @@ export default function AnalyticsTab() {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [activeChartTab, setActiveChartTab] = useState<"vol" | "dens" | "dist">("vol");
+
+  // New sub-tab state for Analytics Tab: "explorer" or "hub"
+  const [subTab, setSubTab] = useState<"explorer" | "hub">("explorer");
+  const [localLedgers, setLocalLedgers] = useState<any[]>([]);
+  const [cloudLedgers, setCloudLedgers] = useState<any[]>([]);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [autoSync, setAutoSync] = useState<boolean>(true);
+
+  // Fetch local ledgers from Express server
+  const fetchLocalLedgers = async () => {
+    try {
+      const res = await fetch("/api/v1/ledgers");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setLocalLedgers(data.ledgers || []);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch local ledgers:", err);
+    }
+  };
+
+  // Sync to Cloud function (declaring first so it can be used in auto-sync)
+  const syncToCloud = async (ledger: UnifiedLedger) => {
+    const { db } = getFirebaseInstances();
+    if (!db) {
+      alert("Firebase is not connected. Please check your config in the settings tab.");
+      return;
+    }
+
+    try {
+      setSyncStatus(`Saving ${ledger.filename} to Cloud...`);
+      let csvContent = ledger.csvData;
+
+      if (!csvContent) {
+        const res = await fetch(`/api/v1/ledgers/${encodeURIComponent(ledger.filename)}`);
+        if (!res.ok) throw new Error("Failed to load local file content.");
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || "Failed to load local file content.");
+        csvContent = data.csvData;
+      }
+
+      if (!csvContent) throw new Error("File content is empty.");
+
+      const safeDocId = ledger.filename.replace(/[.#$/[\]]/g, "_");
+      await setDoc(doc(db, "ledgers", safeDocId), {
+        filename: ledger.filename,
+        size: ledger.size,
+        uploadedAt: ledger.uploadedAt,
+        csvData: csvContent,
+        syncedAt: new Date().toISOString()
+      });
+
+      setSyncStatus(`Successfully synced ${ledger.filename} to cloud.`);
+      setTimeout(() => setSyncStatus(null), 3000);
+    } catch (err: any) {
+      console.error("Sync error:", err);
+      setSyncStatus(`Sync error: ${err.message}`);
+      setTimeout(() => setSyncStatus(null), 5000);
+    }
+  };
+
+  // Real-time synchronization and polling logic
+  useEffect(() => {
+    fetchLocalLedgers();
+    const interval = setInterval(fetchLocalLedgers, 5000);
+
+    const { db } = getFirebaseInstances();
+    if (!db) {
+      return () => clearInterval(interval);
+    }
+
+    try {
+      const q = query(collection(db, "ledgers"), orderBy("uploadedAt", "desc"));
+      const unsub = onSnapshot(q, (snapshot) => {
+        const docs = snapshot.docs.map(d => ({
+          filename: d.data().filename,
+          size: d.data().size || 0,
+          uploadedAt: d.data().uploadedAt,
+          csvData: d.data().csvData || "",
+          id: d.id
+        }));
+        setCloudLedgers(docs);
+      }, (error) => {
+        console.error("Firestore ledgers subscription error:", error);
+      });
+
+      return () => {
+        clearInterval(interval);
+        unsub();
+      };
+    } catch (err) {
+      console.error("Error setting up Firestore ledgers listener:", err);
+      return () => clearInterval(interval);
+    }
+  }, []);
+
+  // Merge lists to build unified ledger logs list
+  const unifiedLedgers = useMemo(() => {
+    const mergedMap = new Map<string, UnifiedLedger>();
+
+    cloudLedgers.forEach((c) => {
+      mergedMap.set(c.filename, {
+        filename: c.filename,
+        size: c.size,
+        uploadedAt: c.uploadedAt,
+        source: "cloud",
+        csvData: c.csvData
+      });
+    });
+
+    localLedgers.forEach((l) => {
+      if (mergedMap.has(l.filename)) {
+        const existing = mergedMap.get(l.filename)!;
+        mergedMap.set(l.filename, {
+          ...existing,
+          source: "synced"
+        });
+      } else {
+        mergedMap.set(l.filename, {
+          filename: l.filename,
+          size: l.size,
+          uploadedAt: l.uploadedAt,
+          source: "local"
+        });
+      }
+    });
+
+    return Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+    );
+  }, [localLedgers, cloudLedgers]);
+
+  // Handle Auto-Sync side effects
+  useEffect(() => {
+    const { db } = getFirebaseInstances();
+    if (!db || !autoSync || unifiedLedgers.length === 0) return;
+
+    // Find first local-only ledger that isn't being actively synced, and push it
+    const firstLocal = unifiedLedgers.find(l => l.source === "local");
+    if (firstLocal) {
+      syncToCloud(firstLocal);
+    }
+  }, [unifiedLedgers, autoSync]);
+
+  // Load ledger details for full interactive charts replay
+  const analyzeLedger = async (ledger: UnifiedLedger) => {
+    try {
+      setSyncStatus(`Loading ${ledger.filename}...`);
+      let csvContent = ledger.csvData;
+
+      if (!csvContent) {
+        const res = await fetch(`/api/v1/ledgers/${encodeURIComponent(ledger.filename)}`);
+        if (!res.ok) throw new Error("Failed to load local file content.");
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || "Failed to load local file content.");
+        csvContent = data.csvData;
+      }
+
+      if (!csvContent) throw new Error("File content is empty.");
+
+      setCsvText(csvContent);
+      setFileName(ledger.filename);
+      setUploadError(null);
+      setSubTab("explorer");
+      setSyncStatus(null);
+    } catch (err: any) {
+      console.error("Load error:", err);
+      alert(`Failed to load file for analysis: ${err.message}`);
+      setSyncStatus(null);
+    }
+  };
+
+  // Safe ledger removal
+  const deleteLedger = async (ledger: UnifiedLedger) => {
+    if (!confirm(`Are you sure you want to delete ${ledger.filename}?`)) {
+      return;
+    }
+
+    try {
+      setSyncStatus(`Deleting ${ledger.filename}...`);
+
+      if (ledger.source === "local" || ledger.source === "synced") {
+        const res = await fetch(`/api/v1/ledgers/${encodeURIComponent(ledger.filename)}`, {
+          method: "DELETE"
+        });
+        if (!res.ok) throw new Error("Failed to delete local file from Express hub.");
+        await fetchLocalLedgers();
+      }
+
+      if (ledger.source === "cloud" || ledger.source === "synced") {
+        const { db } = getFirebaseInstances();
+        if (db) {
+          const safeDocId = ledger.filename.replace(/[.#$/[\]]/g, "_");
+          await deleteDoc(doc(db, "ledgers", safeDocId));
+        }
+      }
+
+      setSyncStatus(`Deleted successfully.`);
+      setTimeout(() => setSyncStatus(null), 2000);
+    } catch (err: any) {
+      console.error("Delete error:", err);
+      alert(`Delete failed: ${err.message}`);
+      setSyncStatus(null);
+    }
+  };
   
   // Interactive Explorer State
   const [selectedSnapshotIndex, setSelectedSnapshotIndex] = useState<number>(0);
@@ -253,7 +479,237 @@ export default function AnalyticsTab() {
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
       
-      {/* 1. TOP HEADER & LOG UPLOADER */}
+      {/* Dynamic Sync Status Notice Banner */}
+      {syncStatus && (
+        <div className="bg-[#4E6290] text-white px-4 py-3 rounded-xl flex items-center justify-between text-xs font-bold shadow-md animate-pulse">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 bg-teal-400 rounded-full animate-ping" />
+            <span>{syncStatus}</span>
+          </div>
+          <button onClick={() => setSyncStatus(null)} className="text-white/70 hover:text-white text-[10px] uppercase">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Sub-tab Navigation Panel */}
+      <div className="flex border-b border-slate-200/80">
+        <button
+          onClick={() => setSubTab("explorer")}
+          className={`px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            subTab === "explorer"
+              ? "border-[#4E6290] text-[#4E6290]"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <div className="flex items-center gap-1.5">
+            <Sliders className="h-4 w-4" />
+            <span>Charts & Interactive Explorer</span>
+          </div>
+        </button>
+        <button
+          onClick={() => setSubTab("hub")}
+          className={`px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            subTab === "hub"
+              ? "border-[#4E6290] text-[#4E6290]"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <div className="flex items-center gap-1.5">
+            <Database className="h-4 w-4" />
+            <span>STAP Node Ledgers</span>
+            {unifiedLedgers.length > 0 && (
+              <span className="bg-rose-500 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full animate-pulse">
+                {unifiedLedgers.length} Files
+              </span>
+            )}
+          </div>
+        </button>
+      </div>
+
+      {subTab === "hub" ? (
+        /* STAP NODE HUB LEDGERS SUB-TAB PANEL */
+        <div className="space-y-6 animate-fadeIn">
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-5 md:p-6 shadow-xs">
+            <div className="flex flex-col lg:flex-row gap-6 items-stretch lg:items-center justify-between">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-[#4E6290]/10 rounded-lg text-[#4E6290]">
+                    <Database className="h-5 w-5" />
+                  </span>
+                  <h2 className="text-base font-black text-slate-800 tracking-tight uppercase animate-fadeIn">STAP Hub Ledger Storage</h2>
+                </div>
+                <p className="text-xs text-slate-500 font-medium">
+                  Manages traffic matrix CSV ledger files compiled automatically by your edge nodes upon intersection shutdown sequence. Integrates with Vercel uploads and Firebase Firestore cloud sync.
+                </p>
+              </div>
+
+              {/* Quick statistics widgets */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:w-96 shrink-0">
+                {/* Auto Sync Toggle */}
+                <div className="flex items-center justify-between bg-slate-50 border border-slate-200/60 p-3 rounded-xl">
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Auto-Sync to Cloud</span>
+                    <span className="text-xs font-bold text-slate-700">Firestore mirroring</span>
+                  </div>
+                  <button
+                    onClick={() => setAutoSync(!autoSync)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      autoSync ? "bg-[#4E6290]" : "bg-slate-300"
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                        autoSync ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Firestore connection badge */}
+                <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200/60 p-3 rounded-xl">
+                  <div className="p-1.5 bg-[#4E6290]/5 rounded-lg text-[#4E6290]">
+                    {getFirebaseConfig().connected ? <Cloud className="h-4 w-4 text-emerald-600" /> : <CloudOff className="h-4 w-4 text-slate-400" />}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">CLOUD DATABASE</span>
+                    <span className="text-xs font-bold text-slate-700 truncate block max-w-[100px]">
+                      {getFirebaseConfig().connected ? getFirebaseConfig().projectId : "Disconnected"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Ledgers List Table Card */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Compiled Master Ledgers</h3>
+                <p className="text-xs text-slate-500">List of all exported absolute density sheets logged across nodes.</p>
+              </div>
+              <button
+                onClick={fetchLocalLedgers}
+                className="flex items-center gap-1 text-[11px] font-bold text-[#4E6290] hover:text-[#3D4F75] bg-[#4E6290]/5 hover:bg-[#4E6290]/10 px-2.5 py-1.5 rounded-lg transition-all"
+              >
+                <RefreshCw className="h-3 w-3" />
+                <span>Refresh Logs</span>
+              </button>
+            </div>
+
+            {unifiedLedgers.length === 0 ? (
+              <div className="p-12 text-center text-slate-400 text-xs space-y-3">
+                <FileSpreadsheet className="h-10 w-10 text-slate-300 mx-auto animate-pulse" />
+                <div className="space-y-1">
+                  <p className="font-extrabold text-slate-700 text-sm">No Ledger Files Uploaded Yet</p>
+                  <p className="text-[11px] text-slate-400 max-w-sm mx-auto font-medium">
+                    Shut down your local Python controller process (e.g. using Ctrl+C) to trigger its automatic compiled ledger export and POST directly to STAP Hub.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200/80 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                      <th className="px-5 py-3">File Name</th>
+                      <th className="px-5 py-3">Size (KB)</th>
+                      <th className="px-5 py-3">Export/Upload Date</th>
+                      <th className="px-5 py-3">Storage Context</th>
+                      <th className="px-5 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {unifiedLedgers.map((ledger) => {
+                      const sizeInKb = (ledger.size / 1024).toFixed(2);
+                      const formattedDate = new Date(ledger.uploadedAt).toLocaleString();
+
+                      return (
+                        <tr key={ledger.filename} className="hover:bg-slate-50/50">
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-2.5">
+                              <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
+                                <FileSpreadsheet className="h-4 w-4" />
+                              </span>
+                              <div className="space-y-0.5">
+                                <span className="font-bold text-slate-800 text-xs block max-w-xs md:max-w-md lg:max-w-xl truncate" title={ledger.filename}>
+                                  {ledger.filename}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  Type: Absolute Traffic Matrix
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-3.5 font-mono text-slate-600 text-[11px]">
+                            {sizeInKb} KB
+                          </td>
+                          <td className="px-5 py-3.5 text-slate-500">
+                            {formattedDate}
+                          </td>
+                          <td className="px-5 py-3.5">
+                            {ledger.source === "synced" ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-[10px] font-bold">
+                                <Cloud className="h-3 w-3 text-emerald-600" />
+                                <span>Synced to Cloud</span>
+                              </span>
+                            ) : ledger.source === "cloud" ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-800 border border-sky-200 rounded-full text-[10px] font-bold">
+                                <Cloud className="h-3 w-3 text-sky-600" />
+                                <span>Cloud Database Only</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-[10px] font-bold">
+                                <CloudOff className="h-3 w-3 text-amber-600 animate-pulse" />
+                                <span>Local Hub Only</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                onClick={() => analyzeLedger(ledger)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-lg transition-all cursor-pointer"
+                                title="Load file parameters into charts and maps simulator"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                                <span>Analyze Log</span>
+                              </button>
+
+                              {ledger.source === "local" && (
+                                <button
+                                  onClick={() => syncToCloud(ledger)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#4E6290] hover:bg-[#3D4F75] text-white font-bold text-[11px] rounded-lg transition-all cursor-pointer"
+                                  title="Upload CSV rows to Firebase Firestore database"
+                                >
+                                  <CloudLightning className="h-3.5 w-3.5 text-yellow-400 animate-pulse" />
+                                  <span>Sync Cloud</span>
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => deleteLedger(ledger)}
+                                className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-transparent hover:border-rose-100 rounded-lg transition-all cursor-pointer"
+                                title="Delete file permanently"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* STANDARD CHARTS AND REPLAY TAB */
+        <>
+          {/* 1. TOP HEADER & LOG UPLOADER */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-5 md:p-6 shadow-xs flex flex-col lg:flex-row gap-6 items-center justify-between">
         <div className="space-y-1.5 w-full lg:max-w-md">
           <div className="flex items-center gap-2">
@@ -817,6 +1273,8 @@ export default function AnalyticsTab() {
         </div>
       </div>
     </>
+  )}
+  </>
   )}
 </div>
   );

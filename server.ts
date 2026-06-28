@@ -152,6 +152,72 @@ async function startServer() {
     }
   });
 
+  // --- API ROUTE: List all uploaded ledgers ---
+  app.get("/api/v1/ledgers", (req: Request, res: Response) => {
+    try {
+      const uploadsDir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(uploadsDir)) {
+        return res.json({ success: true, ledgers: [] });
+      }
+
+      const files = fs.readdirSync(uploadsDir);
+      const ledgers = files
+        .filter((file) => file.endsWith(".csv") || file.endsWith(".txt"))
+        .map((file) => {
+          const filePath = path.join(uploadsDir, file);
+          const stats = fs.statSync(filePath);
+          return {
+            filename: file,
+            size: stats.size,
+            uploadedAt: stats.mtime.toISOString(),
+          };
+        })
+        .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+
+      return res.json({ success: true, ledgers });
+    } catch (err: any) {
+      console.error("[STAP HUB] Failed to list ledgers:", err);
+      return res.status(500).json({ success: false, error: err.message || "Failed to list files." });
+    }
+  });
+
+  // --- API ROUTE: Get a specific ledger's content ---
+  app.get("/api/v1/ledgers/:filename", (req: Request, res: Response) => {
+    try {
+      const safeFilename = path.basename(req.params.filename);
+      const filePath = path.join(process.cwd(), "uploads", safeFilename);
+
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ success: false, error: "Ledger file not found." });
+      }
+
+      const csvData = fs.readFileSync(filePath, "utf8");
+      return res.json({ success: true, filename: safeFilename, csvData });
+    } catch (err: any) {
+      console.error("[STAP HUB] Failed to retrieve ledger content:", err);
+      return res.status(500).json({ success: false, error: err.message || "Failed to retrieve file content." });
+    }
+  });
+
+  // --- API ROUTE: Delete a specific ledger ---
+  app.delete("/api/v1/ledgers/:filename", (req: Request, res: Response) => {
+    try {
+      const safeFilename = path.basename(req.params.filename);
+      const filePath = path.join(process.cwd(), "uploads", safeFilename);
+
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ success: false, error: "Ledger file not found." });
+      }
+
+      fs.unlinkSync(filePath);
+      console.log(`[STAP HUB] Ledger deleted: ${safeFilename}`);
+      return res.json({ success: true, message: `Ledger ${safeFilename} deleted successfully.` });
+    } catch (err: any) {
+      console.error("[STAP HUB] Failed to delete ledger:", err);
+      return res.status(500).json({ success: false, error: err.message || "Failed to delete file." });
+    }
+  });
+
   // --- API ROUTE: Integrated Hub Status State getter ---
   app.get("/api/v1/status", (req: Request, res: Response) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
