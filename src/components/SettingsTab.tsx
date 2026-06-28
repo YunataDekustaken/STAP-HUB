@@ -681,7 +681,6 @@ export default function SettingsTab({
                               <option value="Traffic Commissioner">Traffic Commissioner (Operator)</option>
                               <option value="Inspector">Inspector (Operator)</option>
                               <option value="Operations Analyst">Operations Analyst (Viewer)</option>
-                              <option value="Pending">Pending Access Request</option>
                             </select>
                           </div>
                         </td>
@@ -860,7 +859,6 @@ export default function SettingsTab({
                   <option value="Traffic Commissioner">Traffic Commissioner (Operator)</option>
                   <option value="Inspector">Inspector (Operator)</option>
                   <option value="Operations Analyst">Operations Analyst (Viewer)</option>
-                  <option value="Pending">Pending Access Request</option>
                 </select>
               </div>
 
