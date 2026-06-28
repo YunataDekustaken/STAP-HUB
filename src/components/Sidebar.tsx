@@ -1,5 +1,6 @@
 import React from "react";
 import { LayoutDashboard, Video, FileText, ShieldAlert, Megaphone, User, AlertTriangle, Settings, BarChart3 } from "lucide-react";
+import stapLogo from "../../assets/stap-logo.png";
 
 export type SidebarTab =
   | "DASHBOARD"
@@ -87,26 +88,14 @@ export default function Sidebar({ activeTab, onTabChange, isAdmin, onLoginClick 
     >
       <div className="flex flex-col">
         {/* Brand/Logo Section matching screenshots */}
-        <div className="p-6 pb-2">
-          <div className="flex items-center gap-2">
-            {/* STAP Logo with custom traffic light letter 'T' */}
-            <div className="flex items-center font-black tracking-tight text-3xl font-sans text-white">
-              <span>S</span>
-              {/* Traffic Light graphic inside the letter T */}
-              <span className="relative flex items-center justify-center mx-0.5" style={{ minWidth: "1.4rem" }}>
-                <span className="font-extrabold text-3xl">T</span>
-                <span className="absolute -right-1 top-[20%] flex flex-col gap-0.5 bg-black p-0.5 rounded-full border border-slate-700/50 scale-75">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-xs shadow-red-500/80 animate-pulse" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 shadow-xs shadow-yellow-500/80" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-xs shadow-green-500/80" />
-                </span>
-              </span>
-              <span>A</span>
-              <span>P</span>
-            </div>
-          </div>
-          <div className="text-[8px] text-slate-200/80 font-bold uppercase tracking-wider mt-1 leading-tight">
-            Smart Traffic Automation Program
+        <div className="p-5 pb-2">
+          <div className="flex items-center">
+            <img 
+              src={stapLogo} 
+              alt="STAP - Smart Traffic Automation Program" 
+              className="h-16 w-auto object-contain max-w-full"
+              referrerPolicy="no-referrer"
+            />
           </div>
         </div>
 
