@@ -231,11 +231,11 @@ export class STAPDatabaseManager {
     const stored = localStorage.getItem("stap_users_persistent");
     if (!stored) {
       const initialUsers: User[] = [
-        { id: "u-owner", name: "System Owner", email: "stap.est2526@gmail.com", role: "Administrator" },
-        { id: "u-1", name: "Super Admin", email: "admin@stap.gov", role: "Administrator" },
-        { id: "u-2", name: "Commissioner Carter", email: "commissioner@stap.gov", role: "Traffic Commissioner" },
-        { id: "u-3", name: "Inspector Martinez", email: "martinez@stap.gov", role: "Inspector" },
-        { id: "u-4", name: "Analyst Chen", email: "chen@stap.gov", role: "Operations Analyst" }
+        { id: "u-owner", name: "System Owner", email: "stap.est2526@gmail.com", role: "Administrator", status: "approved" },
+        { id: "u-1", name: "Super Admin", email: "admin@stap.gov", role: "Administrator", status: "approved" },
+        { id: "u-2", name: "Commissioner Carter", email: "commissioner@stap.gov", role: "Traffic Commissioner", status: "approved" },
+        { id: "u-3", name: "Inspector Martinez", email: "martinez@stap.gov", role: "Inspector", status: "approved" },
+        { id: "u-4", name: "Analyst Chen", email: "chen@stap.gov", role: "Operations Analyst", status: "approved" }
       ];
       localStorage.setItem("stap_users_persistent", JSON.stringify(initialUsers));
       return initialUsers;

@@ -2,12 +2,14 @@ export type Lane = "NORTH" | "SOUTH" | "EAST" | "WEST";
 export type LightState = "RED" | "YELLOW" | "GREEN";
 export type SystemMode = "AUTO" | "MANUAL" | "HAZARD" | "EMERGENCY";
 export type Role = "Administrator" | "Traffic Commissioner" | "Operations Analyst" | "Inspector";
+export type UserStatus = "approved" | "pending" | "denied";
 
 export interface User {
   id: string;
   email: string;
   name: string;
   role: Role;
+  status: UserStatus;
   avatarUrl?: string;
   isOnline?: boolean;
   lastLogin?: string;
