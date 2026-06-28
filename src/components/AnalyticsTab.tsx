@@ -429,17 +429,27 @@ export default function AnalyticsTab() {
     }
     try {
       const data = parseTrafficCSV(csvText);
-      setUploadError(null);
       return data;
     } catch (err: any) {
       console.error(err);
-      setUploadError("Failed to parse CSV. Please check that the file format matches the standard STAP output.");
       return {
         sessionStart: "—",
         snapshots: [],
         finalSummary: null,
         allVehicleTypes: []
       };
+    }
+  }, [csvText]);
+
+  // Handle parsing errors
+  useEffect(() => {
+    if (csvText) {
+      try {
+        parseTrafficCSV(csvText);
+        setUploadError(null);
+      } catch (err: any) {
+        setUploadError("Failed to parse CSV. Please check that the file format matches the standard STAP output.");
+      }
     }
   }, [csvText]);
 
@@ -599,18 +609,35 @@ export default function AnalyticsTab() {
     let maxLane = "—";
     let maxTime = "—";
 
-    parsedData.snapshots.forEach((snap) => {
-      snap.lanes.forEach((l) => {
-        if (l.densityOccupancy > maxDensity) {
-          maxDensity = l.densityOccupancy;
+    if (parsedData.snapshots.length > 0) {
+      parsedData.snapshots.forEach((snap) => {
+        snap.lanes.forEach((l) => {
+          if (l.densityOccupancy > maxDensity) {
+            maxDensity = l.densityOccupancy;
+            maxLane = l.lane;
+            maxTime = snap.timestamp.includes(" ") ? snap.timestamp.split(" ")[1] : snap.timestamp;
+          }
+        });
+      });
+    } else if (parsedData.finalSummary) {
+      parsedData.finalSummary.lanes.forEach((l) => {
+        if (l.finalDensity > maxDensity) {
+          maxDensity = l.finalDensity;
           maxLane = l.lane;
-          maxTime = snap.timestamp.includes(" ") ? snap.timestamp.split(" ")[1] : snap.timestamp;
+          maxTime = "Final Snapshot";
         }
       });
-    });
+    }
 
     return { lane: maxLane, density: maxDensity, time: maxTime };
-  }, [parsedData.snapshots]);
+  }, [parsedData]);
+
+  // Set default tab to distribution if no snapshots
+  useEffect(() => {
+    if (parsedData.snapshots.length === 0 && parsedData.finalSummary) {
+      setActiveChartTab("dist");
+    }
+  }, [parsedData.snapshots.length, parsedData.finalSummary]);
 
   // Current interactive snapshot details
   const currentSnapshot: Snapshot | undefined = parsedData.snapshots[selectedSnapshotIndex];
@@ -988,7 +1015,7 @@ export default function AnalyticsTab() {
         </div>
       )}
 
-      {parsedData.snapshots.length === 0 ? (
+      {parsedData.snapshots.length === 0 && !parsedData.finalSummary ? (
         <div className="bg-white rounded-2xl border border-slate-200/80 p-8 md:p-12 text-center max-w-2xl mx-auto my-8 space-y-6 shadow-xs">
           <div className="mx-auto w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center text-[#4E6290]">
             <UploadCloud className="h-8 w-8 animate-bounce text-[#4E6290]" />
@@ -1154,7 +1181,13 @@ export default function AnalyticsTab() {
 
         {/* Chart Content Area */}
         <div className="p-5 md:p-6 h-[340px]">
-          {volumeProgressionData.length === 0 ? (
+          {(activeChartTab === "vol" || activeChartTab === "dens") && parsedData.snapshots.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 text-xs bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+              <TrendingUp className="h-8 w-8 text-slate-300 mb-2" />
+              <span className="font-bold">Progression Data Unavailable</span>
+              <span className="max-w-[200px] mt-1 text-[10px]">This log appears to be a summary report only. Switch to 'Vehicle Classification' to view absolute counts.</span>
+            </div>
+          ) : volumeProgressionData.length === 0 && vehicleDistributionData.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 text-xs">
               <Info className="h-8 w-8 text-slate-300 mb-2" />
               <span>No data points found to graph.</span>
