@@ -2,8 +2,7 @@ import express, { Request, Response } from "express";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
-import { initializeApp, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import * as admin from "firebase-admin";
 
 dotenv.config();
 
@@ -41,7 +40,7 @@ const asyncHandler = (fn: (req: Request, res: Response, next: any) => Promise<an
   };
 };
 
-// Helper to resolve the correct uploads folder. On Vercel, we must write to /tmp.
+// Helper to resolve the correct uploads folder. On Vercel, we bypass this entirely.
 function getUploadsDir(): string {
   const isVercel = !!process.env.VERCEL;
   const dir = isVercel ? "/tmp/uploads" : path.join(process.cwd(), "uploads");
@@ -102,20 +101,19 @@ const CAMERA_ID_TO_LANE: Record<number, "NORTH" | "SOUTH" | "EAST" | "WEST"> = {
 
 const AUTHORIZATION_TOKEN = "node_alpha_J7FVxdRBqwCBWQSdiKBN742lMHuEPX5A";
 
-// Initialize Firebase Admin SDK & Firestore if credentials are provided in the environment
-const hasFirebaseApiKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
-const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+// Serverless safe Firebase Admin Initialization
+const HAS_FIREBASE_CREDS = !!(process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY);
 
-let db: any = null;
-if (hasFirebaseApiKey && firebaseProjectId) {
+let db: admin.firestore.Firestore | null = null;
+if (HAS_FIREBASE_CREDS) {
   try {
-    if (getApps().length === 0) {
-      initializeApp({
-        projectId: firebaseProjectId,
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID
       });
     }
-    db = getFirestore();
-    console.log(`[STAP HUB] Firebase Admin SDK initialized for project: ${firebaseProjectId}`);
+    db = admin.firestore();
+    console.log(`[STAP HUB] Firebase Admin initialized for project: ${process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID}`);
   } catch (err) {
     console.error("[STAP HUB] Failed to initialize Firebase Admin SDK:", err);
   }
@@ -123,11 +121,11 @@ if (hasFirebaseApiKey && firebaseProjectId) {
   console.log("[STAP HUB] Firebase server-side sync disabled (credentials missing in environment variables)");
 }
 
-// Sync the local memory state to Firestore Cloud Database
+// Sync the local memory state to Firestore Cloud Database using stateless Admin SDK
 async function syncStateToFirestore() {
   if (!db) return;
   try {
-    await withTimeout<any>(
+    await withTimeout(
       db.collection("system").doc("state").set({
         ...systemState,
         updatedAt: new Date().toISOString()
@@ -140,17 +138,16 @@ async function syncStateToFirestore() {
   }
 }
 
-// Load the state from Firestore Cloud Database to synchronize stateless containers
+// Load the state from Firestore Cloud Database using stateless Admin SDK
 async function loadStateFromFirestore() {
   if (!db) return;
   try {
-    const snap = await withTimeout<any>(
+    const snap = await withTimeout(
       db.collection("system").doc("state").get(),
       5000,
       "loadStateFromFirestore get"
     );
-    const exists = typeof snap.exists === "function" ? snap.exists() : snap.exists;
-    if (exists) {
+    if (snap.exists) {
       const data = snap.data();
       if (data) {
         systemState = {
@@ -172,7 +169,7 @@ async function loadStateFromFirestore() {
 const app = express();
 const PORT = 3000;
 
-// Let json body parser accept up to 15mb for carrying base64 image data from Python safely
+// Let json body parser accept up to 15mb for carrying base64 image data safely
 app.use(express.json({ limit: "15mb" }));
 
 // CORS Middleware for direct browser interactions
@@ -190,7 +187,7 @@ app.use((req, res, next) => {
 app.get("/api/v1/debug-version", (req: Request, res: Response) => {
   res.json({
     success: true,
-    buildMarker: "stap-hub-debug-v1",
+    buildMarker: "stap-hub-debug-v2-admin-sdk",
     firebaseConfigured: !!db,
     nodeEnv: process.env.NODE_ENV || null,
     isVercel: !!process.env.VERCEL,
@@ -199,7 +196,6 @@ app.get("/api/v1/debug-version", (req: Request, res: Response) => {
 });
 
 // --- API ROUTE: Receive Real-Time YOLO Snapshot Postings ---
-// Matches Python: STAP_HUB_URL = "https://<app-url>/api/v1/snapshots"
 app.post("/api/v1/snapshots", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
@@ -221,14 +217,11 @@ app.post("/api/v1/snapshots", asyncHandler(async (req: Request, res: Response) =
     return res.status(400).json({ success: false, error: `Invalid camera_id: ${camera_id}` });
   }
 
-  // Load existing cloud state first if stateless
   await loadStateFromFirestore();
 
-  // Process snapshot counts & estimate occupancy percentage
   const combinedCount = (cars || 0) + (trucks || 0) + (motorcycles || 0) + (buses || 0) + (emergency_vehicles || 0);
   const estimatedDensity = Math.min(100, Math.round(combinedCount * 7.5 + Math.random() * 5));
 
-  // Update internal server data in-memory
   systemState.lanes[laneKey] = {
     count: combinedCount,
     density: estimatedDensity,
@@ -238,14 +231,12 @@ app.post("/api/v1/snapshots", asyncHandler(async (req: Request, res: Response) =
 
   systemState.heartbeatTime = Date.now();
 
-  // Mirror to Cloud Firestore
   await syncStateToFirestore();
 
   res.json({ success: true, message: `Snapshot parsed successfully for ${laneKey}` });
 }));
 
 // --- API ROUTE: Hardware Node Heartbeat ---
-// Matches Python: STAP_HEARTBEAT_URL = "https://<app-url>/api/v1/heartbeat"
 app.post("/api/v1/heartbeat", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
@@ -260,7 +251,6 @@ app.post("/api/v1/heartbeat", asyncHandler(async (req: Request, res: Response) =
 }));
 
 // --- API ROUTE: Upload CSV Ledger Data ---
-// Save finalized CSV ledger data to server directory and/or Firebase Firestore Cloud
 app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
@@ -272,36 +262,32 @@ app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Respons
     return res.status(400).json({ success: false, error: "Missing filename or valid csvData string in request body." });
   }
 
-  // Normalize path separators (convert all Windows \ to Linux /)
   const normalizedFilename = filename.replace(/\\/g, "/");
   const safeFilename = path.basename(normalizedFilename);
   const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
 
-  try {
-    const isVercel = !!process.env.VERCEL;
-    let savedLocally = false;
+  const isVercel = !!process.env.VERCEL;
+  let savedLocally = false;
+  let savedToCloud = false;
 
-    // 1. Save locally as fallback if NOT running on Vercel
+  try {
+    // 1. Local disk backup is bypassed COMPLETELY on Vercel to prevent Read-Only system crashes
     if (!isVercel) {
       try {
         const uploadsDir = getUploadsDir();
         const filePath = path.join(uploadsDir, safeFilename);
-
         fs.writeFileSync(filePath, csvData, "utf8");
         savedLocally = true;
         console.log(`[STAP HUB] Ledger saved locally: ${safeFilename}`);
       } catch (fsErr) {
         console.warn("[STAP HUB] Local write bypassed:", fsErr);
       }
-    } else {
-      console.log(`[STAP HUB] Running on Vercel. Bypassing local filesystem write for ${safeFilename}.`);
     }
 
-    // 2. Upload directly to Firestore Cloud Database if connected (best-effort, max 5s timeout)
-    let savedToCloud = false;
+    // 2. Stateless HTTP Request to Cloud Firestore
     if (db) {
       try {
-        await withTimeout<any>(
+        await withTimeout(
           db.collection("ledgers").doc(safeDocId).set({
             filename: safeFilename,
             size: Buffer.byteLength(csvData, "utf8"),
@@ -313,26 +299,22 @@ app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Respons
           "upload-ledger Firestore set"
         );
         savedToCloud = true;
-        console.log(`[STAP HUB] Ledger saved to Firestore Cloud successfully: ${safeFilename}`);
+        console.log(`[STAP HUB] Ledger saved to Firestore Cloud via Admin SDK: ${safeFilename}`);
       } catch (cloudErr) {
-        console.error("[STAP HUB] Firestore upload failed or timed out:", cloudErr);
+        console.error("[STAP HUB] Firestore upload failed:", cloudErr);
       }
     }
 
     if (savedLocally || savedToCloud) {
       return res.json({
         success: true,
-        message: `Ledger ${safeFilename} uploaded and processed successfully.`,
+        message: `Ledger ${safeFilename} processed successfully.`,
         savedLocally,
         savedToCloud
       });
     }
 
-    throw new Error(
-      isVercel
-        ? "Firebase Cloud is not configured or failed to save on Vercel environment."
-        : "Local filesystem is write-protected and Firebase Cloud is not configured."
-    );
+    return res.status(503).json({ success: false, error: "Cloud database and storage features are currently offline." });
   } catch (err: any) {
     console.error("[STAP HUB] Failed to save ledger upload:", err);
     return res.status(500).json({ success: false, error: err.message || "Failed to save file on server." });
@@ -343,38 +325,41 @@ app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Respons
 app.get("/api/v1/ledgers", asyncHandler(async (req: Request, res: Response) => {
   try {
     const ledgersMap = new Map<string, any>();
+    const isVercel = !!process.env.VERCEL;
 
-    // 1. Load local logs if any
-    const uploadsDir = getUploadsDir();
-    if (fs.existsSync(uploadsDir)) {
-      try {
-        const files = fs.readdirSync(uploadsDir);
-        files
-          .filter((file) => file.endsWith(".csv") || file.endsWith(".txt"))
-          .forEach((file) => {
-            const filePath = path.join(uploadsDir, file);
-            const stats = fs.statSync(filePath);
-            ledgersMap.set(file, {
-              filename: file,
-              size: stats.size,
-              uploadedAt: stats.mtime.toISOString(),
-              source: "local"
+    // 1. Read local folder if not on Vercel
+    if (!isVercel) {
+      const uploadsDir = getUploadsDir();
+      if (fs.existsSync(uploadsDir)) {
+        try {
+          const files = fs.readdirSync(uploadsDir);
+          files
+            .filter((file) => file.endsWith(".csv") || file.endsWith(".txt"))
+            .forEach((file) => {
+              const filePath = path.join(uploadsDir, file);
+              const stats = fs.statSync(filePath);
+              ledgersMap.set(file, {
+                filename: file,
+                size: stats.size,
+                uploadedAt: stats.mtime.toISOString(),
+                source: "local"
+              });
             });
-          });
-      } catch (fsErr) {
-        console.warn("[STAP HUB] Failed to read local logs folder:", fsErr);
+        } catch (fsErr) {
+          console.warn("[STAP HUB] Failed to read local logs folder:", fsErr);
+        }
       }
     }
 
-    // 2. Load Firestore logs if configured
+    // 2. Fetch via Admin SDK
     if (db) {
       try {
-        const querySnapshot = await withTimeout<any>(
+        const querySnapshot = await withTimeout(
           db.collection("ledgers").get(),
           5000,
           "list ledgers get"
         );
-        querySnapshot.forEach((docSnap: any) => {
+        querySnapshot.forEach((docSnap) => {
           const data = docSnap.data();
           const existing = ledgersMap.get(data.filename);
           ledgersMap.set(data.filename, {
@@ -404,24 +389,26 @@ app.get("/api/v1/ledgers", asyncHandler(async (req: Request, res: Response) => {
 app.get("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Response) => {
   try {
     const safeFilename = path.basename(req.params.filename);
-    const filePath = path.join(getUploadsDir(), safeFilename);
+    const isVercel = !!process.env.VERCEL;
 
-    if (fs.existsSync(filePath)) {
-      const csvData = fs.readFileSync(filePath, "utf8");
-      return res.json({ success: true, filename: safeFilename, csvData });
+    if (!isVercel) {
+      const filePath = path.join(getUploadsDir(), safeFilename);
+      if (fs.existsSync(filePath)) {
+        const csvData = fs.readFileSync(filePath, "utf8");
+        return res.json({ success: true, filename: safeFilename, csvData });
+      }
     }
 
-    // Fallback to Firestore Cloud
+    // Fallback to Admin Firestore
     if (db) {
       try {
         const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
-        const docSnap = await withTimeout<any>(
+        const docSnap = await withTimeout(
           db.collection("ledgers").doc(safeDocId).get(),
           5000,
           "get ledger get"
         );
-        const exists = typeof docSnap.exists === "function" ? docSnap.exists() : docSnap.exists;
-        if (exists) {
+        if (docSnap.exists) {
           const data = docSnap.data();
           if (data) {
             return res.json({ success: true, filename: safeFilename, csvData: data.csvData });
@@ -432,7 +419,7 @@ app.get("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Resp
       }
     }
 
-    return res.status(404).json({ success: false, error: "Ledger file not found locally or in Cloud Firestore database." });
+    return res.status(404).json({ success: false, error: "Ledger file not found locally or in cloud database." });
   } catch (err: any) {
     console.error("[STAP HUB] Failed to retrieve ledger content:", err);
     return res.status(500).json({ success: false, error: err.message || "Failed to retrieve file content." });
@@ -443,19 +430,22 @@ app.get("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Resp
 app.delete("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Response) => {
   try {
     const safeFilename = path.basename(req.params.filename);
-    const filePath = path.join(getUploadsDir(), safeFilename);
+    const isVercel = !!process.env.VERCEL;
 
     let deletedLocal = false;
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      deletedLocal = true;
+    if (!isVercel) {
+      const filePath = path.join(getUploadsDir(), safeFilename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        deletedLocal = true;
+      }
     }
 
     let deletedCloud = false;
     if (db) {
       try {
         const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
-        await withTimeout<any>(
+        await withTimeout(
           db.collection("ledgers").doc(safeDocId).delete(),
           5000,
           "delete ledger delete"
@@ -466,7 +456,6 @@ app.delete("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: R
       }
     }
 
-    console.log(`[STAP HUB] Ledger deleted: ${safeFilename} (local: ${deletedLocal}, cloud: ${deletedCloud})`);
     return res.json({
       success: true,
       message: `Ledger ${safeFilename} deleted successfully.`,
@@ -483,7 +472,6 @@ app.delete("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: R
 app.get("/api/v1/status", asyncHandler(async (req: Request, res: Response) => {
   await loadStateFromFirestore();
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
-  // Be generous: 20 seconds. If any packet has been parsed in the last 20 seconds
   const nodeOnline = Date.now() - systemState.heartbeatTime < 20000;
   res.json({
     ...systemState,
@@ -492,7 +480,7 @@ app.get("/api/v1/status", asyncHandler(async (req: Request, res: Response) => {
   });
 }));
 
-// --- API ROUTE: Force Set Intersection Mode or Lights (Used by Web Console/Dashboard) ---
+// --- API ROUTE: Force Set Intersection Mode or Lights (Used by Web Console) ---
 app.post("/api/v1/control", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   const userAgent = req.headers["user-agent"] || "";
@@ -519,7 +507,6 @@ app.post("/api/v1/control", asyncHandler(async (req: Request, res: Response) => 
     };
   }
 
-  // Direct automated updates on active lights matching the state
   if (!isFromPython) {
     if (systemState.mode === "AUTO") {
       Object.keys(systemState.lanes).forEach((l) => {
@@ -544,7 +531,7 @@ app.post("/api/v1/control", asyncHandler(async (req: Request, res: Response) => 
   res.json({ success: true, state: systemState });
 }));
 
-// Global Express error-handling middleware registered after all routes to prevent Vercel 500 overrides
+// Global Express error-handling middleware
 app.use((err: any, req: Request, res: Response, next: any) => {
   console.error("[STAP HUB] Global error caught:", err);
   res.status(500).json({
@@ -571,7 +558,6 @@ async function configureFrontend() {
   }
 }
 
-// In standard dev or custom production runner, set up Vite/Static and start listening
 if (!process.env.VERCEL) {
   configureFrontend().then(() => {
     app.listen(PORT, "0.0.0.0", () => {
@@ -579,8 +565,7 @@ if (!process.env.VERCEL) {
     });
   });
 } else {
-  // If running in Vercel environment, let standard routing work without the custom Vite middleware server
-  console.log("[STAP HUB] Running on Vercel Serverless Platform.");
+  console.log("[STAP HUB] Running on Vercel Serverless Platform safely.");
 }
 
 export default app;
