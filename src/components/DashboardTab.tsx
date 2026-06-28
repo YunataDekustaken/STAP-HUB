@@ -14,8 +14,11 @@ import {
   CloudRain, 
   MapPin,
   Info,
-  X
+  Maximize,
+  X,
+  Minimize2
 } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 
 import PublicAnalytics from "./PublicAnalytics";
 
@@ -38,6 +41,8 @@ export default function DashboardTab({
   weather,
   weatherLocation
  }: DashboardTabProps) {
+  const [selectedVideo, setSelectedVideo] = useState<{ lane: Lane; name: string } | null>(null);
+
   // Local state to track whether the mixed content bypass tutorial/warning banner is visible
   const [showBypassTutorial, setShowBypassTutorial] = useState<boolean>(() => {
     return localStorage.getItem("stap_show_tutorial") !== "false";
@@ -200,11 +205,19 @@ export default function DashboardTab({
           {/* 2x2 CCTV Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {(["NORTH", "SOUTH", "EAST", "WEST"] as Lane[]).map((ln) => (
-              <div key={ln} className="bg-[#1E293B] rounded-2xl overflow-hidden border border-slate-200 shadow-sm flex flex-col justify-between aspect-video min-h-[220px] relative">
+              <div 
+                key={ln} 
+                onClick={() => setSelectedVideo({ lane: ln, name: laneLabels[ln] })}
+                className="bg-[#1E293B] rounded-2xl overflow-hidden border border-slate-200 shadow-sm flex flex-col justify-between aspect-video min-h-[220px] relative cursor-zoom-in group"
+              >
                 
                 {/* Approach Pill */}
                 <div className="absolute top-3 left-3 bg-[#0F172A]/90 text-white text-[9px] font-bold px-2 py-1 rounded uppercase tracking-wider z-10 border border-slate-700/30">
                   {ln}
+                </div>
+
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity z-20 flex items-center justify-center">
+                   <Maximize className="w-8 h-8 text-white/70" />
                 </div>
 
 
@@ -297,22 +310,6 @@ export default function DashboardTab({
         {/* Right Column (3 cols): Widgets list */}
         <div className="lg:col-span-3 space-y-4">
           
-          {/* Intersection card */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest block">INTERSECTION</span>
-            <div className="space-y-1">
-              <h4 className="font-bold text-slate-800 text-sm leading-snug">
-                Mayor Gil Fernando Ave <br /> x Sumulong Highway
-              </h4>
-              <p className="text-[11px] text-slate-400 font-semibold">Marikina City, Metro Manila</p>
-            </div>
-            <span className={`inline-block px-2.5 py-0.5 rounded text-[9px] font-bold ${
-              isNodeConnected ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-slate-50 text-slate-400 border border-slate-100"
-            }`}>
-              {isNodeConnected ? "Online" : "Offline"}
-            </span>
-          </div>
-
           {/* Dynamic Weather Widget */}
           <div className={`p-5 rounded-2xl border shadow-xs space-y-4 relative overflow-hidden transition-all duration-300 ${
             weather === "RAINY" 
@@ -433,6 +430,65 @@ export default function DashboardTab({
       <div className="pt-2">
         <PublicAnalytics />
       </div>
+
+      {/* Video Preview Modal */}
+      <AnimatePresence>
+        {selectedVideo && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-sm p-4 md:p-8"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative w-full max-w-6xl aspect-video bg-slate-900 rounded-2xl overflow-hidden border border-white/10 shadow-2xl"
+            >
+              <img
+                src={`http://${nodeIp}:5000/video_feed/${selectedVideo.lane.toLowerCase()}`}
+                alt={selectedVideo.name}
+                className="w-full h-full object-contain"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src =
+                    "https://images.unsplash.com/photo-1545147986-a9d6f210df73?auto=format&fit=crop&q=80&w=1200";
+                }}
+              />
+
+              {/* Modal UI Overlays */}
+              <div className="absolute top-0 inset-x-0 p-6 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between pointer-events-none">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-emerald-500 rounded-lg animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.5)]" />
+                  <div>
+                    <h4 className="text-xl font-black text-white tracking-tight uppercase">{selectedVideo.name}</h4>
+                    <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Live Stream • Ultra High Definition</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedVideo(null)}
+                  className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all cursor-pointer pointer-events-auto backdrop-blur-md"
+                >
+                  <Minimize2 className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="absolute bottom-6 left-6 pointer-events-none">
+                <div className="flex items-center gap-3 px-4 py-2 bg-black/40 backdrop-blur-md rounded-xl border border-white/5">
+                  <Activity className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-mono text-white/80">LATENCY: 42ms • FPS: 60</span>
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Click outside to close */}
+            <div 
+              className="absolute inset-0 -z-10" 
+              onClick={() => setSelectedVideo(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
