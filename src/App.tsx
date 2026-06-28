@@ -113,6 +113,66 @@ export default function App() {
   // Firestore sync error handler state
   const [firebaseSyncError, setFirebaseSyncError] = useState<string | null>(null);
 
+  // STAP Node Connection state
+  const [nodeIp, setNodeIp] = useState<string>(() => localStorage.getItem("stap_node_ip") || "192.168.1.100");
+  const [isNodeConnected, setIsNodeConnected] = useState<boolean>(false);
+
+  // Core Traffic State
+  const [systemMode, setSystemMode] = useState<SystemMode>("AUTO");
+  const [activeLane, setActiveLane] = useState<Lane>("NORTH");
+  const [weather, setWeather] = useState<"SUNNY" | "RAINY">("SUNNY");
+  const [weatherLocation, setWeatherLocation] = useState<string>(() => {
+    return localStorage.getItem("stap_weather_location") || "Marikina City, Metro Manila, Philippines";
+  });
+  const [remainingSecs, setRemainingSecs] = useState<number>(35);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Lanes structure initialized with offline defaults (0 counts, red lights, offline LOS)
+  const [lanes, setLanes] = useState<Record<Lane, { count: number; density: number; light: LightState; los: string }>>({
+    NORTH: { count: 0, density: 0, light: "RED", los: "—" },
+    SOUTH: { count: 0, density: 0, light: "RED", los: "—" },
+    EAST: { count: 0, density: 0, light: "RED", los: "—" },
+    WEST: { count: 0, density: 0, light: "RED", los: "—" }
+  });
+
+  // Dynamic lists states
+  const [footageRequests, setFootageRequests] = useState<FootageRequest[]>(INITIAL_FOOTAGE_REQUESTS);
+  const [incidentReports, setIncidentReports] = useState<IncidentReport[]>(INITIAL_INCIDENT_REPORTS);
+  const [announcements, setAnnouncements] = useState<Announcement[]>(INITIAL_ANNOUNCEMENTS);
+
+  // Helper function to update system settings in Firestore
+  const updateSystemSettingsInFirestore = async (updatedFields: {
+    nodeIp?: string;
+    weather?: "SUNNY" | "RAINY";
+    weatherLocation?: string;
+    systemMode?: SystemMode;
+  }) => {
+    const { db } = getFirebaseInstances();
+    if (!db) return;
+    try {
+      await setDoc(doc(db, "settings", "system"), updatedFields, { merge: true });
+    } catch (e) {
+      console.warn("Notice: Error saving system settings to Firestore:", e);
+    }
+  };
+
+  const handleSetNodeIp = async (ip: string) => {
+    setNodeIp(ip);
+    localStorage.setItem("stap_node_ip", ip);
+    await updateSystemSettingsInFirestore({ nodeIp: ip });
+  };
+
+  const handleSetWeather = async (w: "SUNNY" | "RAINY") => {
+    setWeather(w);
+    await updateSystemSettingsInFirestore({ weather: w });
+  };
+
+  const handleUpdateWeatherLocation = async (loc: string) => {
+    setWeatherLocation(loc);
+    localStorage.setItem("stap_weather_location", loc);
+    await updateSystemSettingsInFirestore({ weatherLocation: loc });
+  };
+
   // Sync Google Auth State
   useEffect(() => {
     const { auth } = getFirebaseInstances();
@@ -151,8 +211,8 @@ export default function App() {
       }
       setFirebaseSyncError(null);
     }, (error) => {
-      console.error("Firestore Footage Sync Error:", error);
-      setFirebaseSyncError(error.message || String(error));
+      console.warn("Firestore Footage Sync Notice:", error.message || error);
+      setFirebaseSyncError("Could not sync live footage requests. Ensure 'footage_requests' exists and read rules are public in your Firebase Console.");
     });
 
     // 2. Live Sync Incident Reports
@@ -166,8 +226,8 @@ export default function App() {
       }
       setFirebaseSyncError(null);
     }, (error) => {
-      console.error("Firestore Incident Sync Error:", error);
-      setFirebaseSyncError(error.message || String(error));
+      console.warn("Firestore Incident Sync Notice:", error.message || error);
+      setFirebaseSyncError("Could not sync live incident reports. Ensure 'incident_reports' exists and read rules are public in your Firebase Console.");
     });
 
     // 3. Live Sync Announcements
@@ -181,25 +241,40 @@ export default function App() {
       }
       setFirebaseSyncError(null);
     }, (error) => {
-      console.error("Firestore Announcements Sync Error:", error);
-      setFirebaseSyncError(error.message || String(error));
+      console.warn("Firestore Announcements Sync Notice:", error.message || error);
+      setFirebaseSyncError("Could not sync live announcements. Ensure 'announcements' exists and read rules are public in your Firebase Console.");
+    });
+
+    // 4. Live Sync System Settings
+    const unsubSettings = onSnapshot(doc(db, "settings", "system"), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.nodeIp !== undefined) {
+          setNodeIp(data.nodeIp);
+          localStorage.setItem("stap_node_ip", data.nodeIp);
+        }
+        if (data.weather !== undefined) {
+          setWeather(data.weather);
+        }
+        if (data.weatherLocation !== undefined) {
+          setWeatherLocation(data.weatherLocation);
+          localStorage.setItem("stap_weather_location", data.weatherLocation);
+        }
+        if (data.systemMode !== undefined) {
+          setSystemMode(data.systemMode);
+        }
+      }
+    }, (error) => {
+      console.warn("Firestore Settings Sync Notice:", error.message || error);
     });
 
     return () => {
       unsubFootage();
       unsubIncidents();
       unsubAnnouncements();
+      unsubSettings();
     };
   }, []);
-
-  // STAP Node Connection state
-  const [nodeIp, setNodeIp] = useState<string>(() => localStorage.getItem("stap_node_ip") || "192.168.1.100");
-  const [isNodeConnected, setIsNodeConnected] = useState<boolean>(false);
-
-  // Sync node IP to localStorage
-  useEffect(() => {
-    localStorage.setItem("stap_node_ip", nodeIp);
-  }, [nodeIp]);
 
   // Dynamic mixed content bypass trigger to force secure tunnel dynamic config on Python node
   const [mixedContentTrigger, setMixedContentTrigger] = useState<number>(Date.now());
@@ -209,29 +284,6 @@ export default function App() {
     }, 4000);
     return () => clearInterval(interval);
   }, []);
-
-  // Core Traffic State
-  const [systemMode, setSystemMode] = useState<SystemMode>("AUTO");
-  const [activeLane, setActiveLane] = useState<Lane>("NORTH");
-  const [weather, setWeather] = useState<"SUNNY" | "RAINY">("SUNNY");
-  const [weatherLocation, setWeatherLocation] = useState<string>(() => {
-    return localStorage.getItem("stap_weather_location") || "Marikina City, Metro Manila, Philippines";
-  });
-  const [remainingSecs, setRemainingSecs] = useState<number>(35);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  // Lanes structure initialized with offline defaults (0 counts, red lights, offline LOS)
-  const [lanes, setLanes] = useState<Record<Lane, { count: number; density: number; light: LightState; los: string }>>({
-    NORTH: { count: 0, density: 0, light: "RED", los: "—" },
-    SOUTH: { count: 0, density: 0, light: "RED", los: "—" },
-    EAST: { count: 0, density: 0, light: "RED", los: "—" },
-    WEST: { count: 0, density: 0, light: "RED", los: "—" }
-  });
-
-  // Dynamic lists states
-  const [footageRequests, setFootageRequests] = useState<FootageRequest[]>(INITIAL_FOOTAGE_REQUESTS);
-  const [incidentReports, setIncidentReports] = useState<IncidentReport[]>(INITIAL_INCIDENT_REPORTS);
-  const [announcements, setAnnouncements] = useState<Announcement[]>(INITIAL_ANNOUNCEMENTS);
 
   // Active, real-time status polling with hybrid local-direct and cloud-proxy fallback
   useEffect(() => {
@@ -337,7 +389,7 @@ export default function App() {
             }
           }
         } catch (err) {
-          console.error("STAP Live status sync error:", err);
+          console.warn("STAP Live status sync note:", err);
         }
       }
     };
@@ -704,13 +756,14 @@ export default function App() {
             {activeTab === "TRAFFIC_LIGHTS" && isAdmin && (
               <ControlTab
                 nodeIp={nodeIp}
-                setNodeIp={setNodeIp}
+                setNodeIp={handleSetNodeIp}
                 isNodeConnected={isNodeConnected}
                 setIsNodeConnected={setIsNodeConnected}
                 mode={systemMode}
                 lanes={lanes}
                 onChangeMode={async (m) => {
                   setSystemMode(m);
+                  await updateSystemSettingsInFirestore({ systemMode: m });
                   
                   // 1. Sync state to cloud server immediately
                   try {
@@ -720,7 +773,7 @@ export default function App() {
                       body: JSON.stringify({ mode: m })
                     });
                   } catch (e) {
-                    console.error("Cloud control sync error:", e);
+                    console.warn("Cloud control sync note:", e);
                   }
 
                   // 2. Dispatch REST command to physical local Python node
@@ -761,7 +814,7 @@ export default function App() {
                       })
                     });
                   } catch (e) {
-                    console.error("Cloud light sync error:", e);
+                    console.warn("Cloud light sync note:", e);
                   }
 
                   // 2. Sync to local physical Python controller
@@ -838,18 +891,15 @@ export default function App() {
             {activeTab === "SETTINGS" && isAdmin && (
               <SettingsTab
                 nodeIp={nodeIp}
-                setNodeIp={setNodeIp}
+                setNodeIp={handleSetNodeIp}
                 isNodeConnected={isNodeConnected}
                 setIsNodeConnected={setIsNodeConnected}
                 setLanes={setLanes}
                 weather={weather}
-                setWeather={setWeather}
+                setWeather={handleSetWeather}
                 isAdmin={isAdmin}
                 weatherLocation={weatherLocation}
-                onUpdateWeatherLocation={(loc) => {
-                  setWeatherLocation(loc);
-                  localStorage.setItem("stap_weather_location", loc);
-                }}
+                onUpdateWeatherLocation={handleUpdateWeatherLocation}
               />
             )}
 
@@ -880,7 +930,7 @@ export default function App() {
                         setShowLoginModal(false);
                         setActiveTab("DASHBOARD");
                       } catch (err: any) {
-                        console.error("Google auth error:", err);
+                        console.warn("Google auth note:", err);
                         setLoginError(err.message || "Failed to authenticate with Google Account.");
                       }
                     }

@@ -37,7 +37,61 @@ export function saveFirebaseConfig(config: FirebaseSavedSettings) {
   localStorage.setItem("stap_firebase_config", JSON.stringify(config));
 }
 
+// HARDCODED FIREBASE INTEGRATION VALUES
+// You can:
+// 1. Paste your Firebase Web App configuration credentials directly in this object.
+// 2. Or configure them as Environment Variables on Vercel with a "VITE_FIREBASE_" prefix (e.g., VITE_FIREBASE_API_KEY).
+const HARDCODED_FIREBASE_CREDENTIALS = {
+  apiKey: "AIzaSyDoX-your-hardcoded-api-key", // REPLACE WITH YOUR ACTUAL FIREBASE API KEY (e.g. "AIzaSy...")
+  authDomain: "stap-est-manila.firebaseapp.com", // REPLACE WITH YOUR ACTUAL AUTH DOMAIN
+  projectId: "stap-est-manila", // REPLACE WITH YOUR ACTUAL PROJECT ID
+  storageBucket: "stap-est-manila.appspot.com", // REPLACE WITH YOUR ACTUAL STORAGE BUCKET
+  messagingSenderId: "895471203058", // REPLACE WITH YOUR ACTUAL MESSAGING SENDER ID
+  appId: "1:895471203058:web:b1d8f1d5e6b7c8d9e0a1f2" // REPLACE WITH YOUR ACTUAL APP ID
+};
+
 export function getFirebaseConfig(): FirebaseConnectionConfig {
+  // 1. Check if environment variables are provided (e.g. in Vercel deployment)
+  const metaEnv = (import.meta as any).env || {};
+  const envApiKey = metaEnv.VITE_FIREBASE_API_KEY;
+  const envAuthDomain = metaEnv.VITE_FIREBASE_AUTH_DOMAIN;
+  const envProjectId = metaEnv.VITE_FIREBASE_PROJECT_ID;
+  const envStorageBucket = metaEnv.VITE_FIREBASE_STORAGE_BUCKET;
+  const envMessagingSenderId = metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID;
+  const envAppId = metaEnv.VITE_FIREBASE_APP_ID;
+
+  if (envApiKey && envProjectId) {
+    return {
+      apiKey: envApiKey,
+      authDomain: envAuthDomain || "",
+      projectId: envProjectId,
+      storageBucket: envStorageBucket || "",
+      messagingSenderId: envMessagingSenderId || "",
+      appId: envAppId || "",
+      connected: true
+    };
+  }
+
+  // 2. Check if hardcoded values are filled and are NOT default placeholders
+  const hc = HARDCODED_FIREBASE_CREDENTIALS;
+  const isHcValid = hc.apiKey && 
+                    hc.apiKey.trim() !== "" && 
+                    !hc.apiKey.includes("your-hardcoded-api-key") && 
+                    !hc.apiKey.startsWith("YOUR_");
+
+  if (isHcValid) {
+    return {
+      apiKey: hc.apiKey.trim(),
+      authDomain: hc.authDomain?.trim() || "",
+      projectId: hc.projectId.trim(),
+      storageBucket: hc.storageBucket?.trim() || "",
+      messagingSenderId: hc.messagingSenderId?.trim() || "",
+      appId: hc.appId?.trim() || "",
+      connected: true
+    };
+  }
+
+  // 3. Fallback to localStorage (manually entered settings)
   const saved = localStorage.getItem("stap_firebase_config");
   if (!saved) {
     return {

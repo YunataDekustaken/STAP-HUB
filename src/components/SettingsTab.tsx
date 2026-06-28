@@ -35,7 +35,7 @@ export default function SettingsTab({
   const [errorMessage, setErrorMessage] = useState("");
 
   // Sub-tabs navigation state
-  const [activeSubTab, setActiveSubTab] = useState<"general" | "firebase" | "users">("general");
+  const [activeSubTab, setActiveSubTab] = useState<"general" | "users">("general");
 
   // User Management state
   const [users, setUsers] = useState<User[]>([]);
@@ -50,22 +50,10 @@ export default function SettingsTab({
 
   // Firebase configuration state
   const [firebaseConnected, setFirebaseConnected] = useState<boolean>(false);
-  const [fbApiKey, setFbApiKey] = useState<string>("");
-  const [fbAuthDomain, setFbAuthDomain] = useState<string>("");
-  const [fbProjectId, setFbProjectId] = useState<string>("");
-  const [fbStorageBucket, setFbStorageBucket] = useState<string>("");
-  const [fbMessagingSenderId, setFbMessagingSenderId] = useState<string>("");
-  const [fbAppId, setFbAppId] = useState<string>("");
 
   useEffect(() => {
     const config = getFirebaseConfig();
     setFirebaseConnected(config.connected);
-    setFbApiKey(config.apiKey || "");
-    setFbAuthDomain(config.authDomain || "");
-    setFbProjectId(config.projectId || "");
-    setFbStorageBucket(config.storageBucket || "");
-    setFbMessagingSenderId(config.messagingSenderId || "");
-    setFbAppId(config.appId || "");
   }, []);
 
   // Synchronize users on load or when firebaseConnected state changes
@@ -208,42 +196,7 @@ export default function SettingsTab({
     }
   };
 
-  const handleSaveFirebase = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!fbApiKey.trim() || !fbProjectId.trim()) {
-      setErrorMessage("At least API Key and Project ID are required to bind Firebase.");
-      return;
-    }
-    const newConfig = {
-      apiKey: fbApiKey.trim(),
-      authDomain: fbAuthDomain.trim(),
-      projectId: fbProjectId.trim(),
-      storageBucket: fbStorageBucket.trim(),
-      messagingSenderId: fbMessagingSenderId.trim(),
-      appId: fbAppId.trim(),
-    };
-    saveFirebaseConfig(newConfig);
-    setFirebaseConnected(true);
-    setSuccessMessage("Firebase config saved successfully! The app is now linked to your private Google auth & database accounts. Reloading workspace...");
-    setTimeout(() => {
-      window.location.reload();
-    }, 1500);
-  };
 
-  const handleDisconnectFirebase = () => {
-    localStorage.removeItem("stap_firebase_config");
-    setFirebaseConnected(false);
-    setFbApiKey("");
-    setFbAuthDomain("");
-    setFbProjectId("");
-    setFbStorageBucket("");
-    setFbMessagingSenderId("");
-    setFbAppId("");
-    setSuccessMessage("Disconnected your custom Firebase account. Reverted to Local Sandbox. Reloading...");
-    setTimeout(() => {
-      window.location.reload();
-    }, 1500);
-  };
 
   const [presetLocation, setPresetLocation] = useState<string>(() => {
     const presets = [
@@ -389,19 +342,6 @@ export default function SettingsTab({
         >
           <Settings className="h-4 w-4" />
           General & Weather
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSubTab("firebase")}
-          className={`flex items-center gap-2 px-5 py-3 text-xs font-bold transition-all border-b-2 cursor-pointer -mb-px rounded-t-xl whitespace-nowrap ${
-            activeSubTab === "firebase"
-              ? "border-slate-800 text-slate-800 bg-white"
-              : "border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50"
-          }`}
-        >
-          <Database className="h-4 w-4" />
-          Firebase Integration
         </button>
 
         <button
@@ -643,145 +583,6 @@ export default function SettingsTab({
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {activeSubTab === "firebase" && (
-        <div className="space-y-6 animate-fadeIn">
-          {/* 4. CUSTOM FIREBASE CONSOLE INTEGRATION SECTION */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-cyan-50 border border-cyan-100 text-cyan-700 rounded-xl">
-                <Database className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-800">Custom Firebase Account Integration</h3>
-                <p className="text-xs text-slate-500 font-medium">Connect your personal Firebase console for cloud database storage and Google login authentication</p>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl text-xs text-slate-600 leading-relaxed font-medium">
-              <p className="font-bold text-slate-700 mb-1 flex items-center gap-1">
-                <HelpCircle className="h-4 w-4 text-slate-500" />
-                How to integrate your private Google Cloud Console / Firebase instance:
-              </p>
-              <ol className="list-decimal pl-5 space-y-1.5 text-slate-500">
-                <li>Create a free project inside the <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-cyan-600 font-bold hover:underline">Firebase Console</a>.</li>
-                <li>Enable <strong>Google Auth Provider</strong> under Build &rarr; Authentication &rarr; Sign-in method.</li>
-                <li>Enable <strong>Cloud Firestore Database</strong> in your Firebase Console sidebar, creating it in your preferred region.</li>
-                <li>Create a <strong>Web App</strong> inside your Firebase project settings, then copy-paste the configuration parameters (API Key, Project ID, etc.) down below.</li>
-                <li>In your Firebase Console <strong>Authentication &rarr; Settings &rarr; Authorized domains</strong>, make sure to add your app's web domain (such as <code>{window.location.hostname}</code>) so Firebase accepts redirect request targets.</li>
-                <li>Click <strong>Save & Bind Firebase</strong> below to instantly switch database pipelines and login mechanisms!</li>
-              </ol>
-            </div>
-
-            <form onSubmit={handleSaveFirebase} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-600 block uppercase tracking-wider font-mono">API Key</label>
-                  <input
-                    type="password"
-                    value={fbApiKey}
-                    onChange={(e) => {
-                      setFbApiKey(e.target.value);
-                      setSuccessMessage("");
-                    }}
-                    placeholder="AIzaSyA..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-xs text-slate-800 outline-none font-mono focus:border-slate-400 focus:bg-white"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-600 block uppercase tracking-wider font-mono">Project ID</label>
-                  <input
-                    type="text"
-                    value={fbProjectId}
-                    onChange={(e) => {
-                      setFbProjectId(e.target.value);
-                      setSuccessMessage("");
-                    }}
-                    placeholder="e.g. my-traffic-hub-123"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-xs text-slate-800 outline-none font-mono focus:border-slate-400 focus:bg-white"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-600 block uppercase tracking-wider font-mono">Auth Domain</label>
-                  <input
-                    type="text"
-                    value={fbAuthDomain}
-                    onChange={(e) => {
-                      setFbAuthDomain(e.target.value);
-                      setSuccessMessage("");
-                    }}
-                    placeholder="e.g. my-traffic-hub-123.firebaseapp.com"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-xs text-slate-800 outline-none font-mono focus:border-slate-400 focus:bg-white"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-600 block uppercase tracking-wider font-mono">Storage Bucket</label>
-                  <input
-                    type="text"
-                    value={fbStorageBucket}
-                    onChange={(e) => {
-                      setFbStorageBucket(e.target.value);
-                      setSuccessMessage("");
-                    }}
-                    placeholder="e.g. my-traffic-hub-123.appspot.com"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-xs text-slate-800 outline-none font-mono focus:border-slate-400 focus:bg-white"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-600 block uppercase tracking-wider font-mono">Messaging Sender ID</label>
-                  <input
-                    type="text"
-                    value={fbMessagingSenderId}
-                    onChange={(e) => {
-                      setFbMessagingSenderId(e.target.value);
-                      setSuccessMessage("");
-                    }}
-                    placeholder="e.g. 2198031203"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-xs text-slate-800 outline-none font-mono focus:border-slate-400 focus:bg-white"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-600 block uppercase tracking-wider font-mono">App ID</label>
-                  <input
-                    type="text"
-                    value={fbAppId}
-                    onChange={(e) => {
-                      setFbAppId(e.target.value);
-                      setSuccessMessage("");
-                    }}
-                    placeholder="e.g. 1:21980:web:d7a8d9a"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-xs text-slate-800 outline-none font-mono focus:border-slate-400 focus:bg-white"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="submit"
-                  className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs px-5 py-2.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
-                >
-                  Save & Bind Firebase
-                </button>
-
-                {firebaseConnected && (
-                  <button
-                    type="button"
-                    onClick={handleDisconnectFirebase}
-                    className="bg-white hover:bg-slate-50 border border-slate-200 text-rose-600 hover:text-rose-700 font-bold text-xs px-5 py-2.5 rounded-lg transition-all active:scale-95 cursor-pointer"
-                  >
-                    Disconnect & Use Local Sandbox
-                  </button>
-                )}
-              </div>
-            </form>
           </div>
         </div>
       )}
