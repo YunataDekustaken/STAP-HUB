@@ -103,6 +103,7 @@ app.get("/api/v1/ledgers", async (req: Request, res: Response) => {
             filename: fields.filename?.stringValue || "",
             size: Number(fields.size?.integerValue || 0),
             uploadedAt: fields.uploadedAt?.stringValue || "",
+            sourceType: fields.sourceType?.stringValue || "python_controller",
             source: "cloud"
           });
         });
@@ -161,19 +162,21 @@ app.put("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
         filename: { stringValue: safeFilename },
         size: { integerValue: String(byteLength) },
         uploadedAt: { stringValue: new Date().toISOString() },
+        sourceType: { stringValue: "user_uploaded" },
         csvData: { stringValue: csvData },
         syncedAt: { stringValue: new Date().toISOString() }
       }
     };
 
-    // Try to get original uploadedAt to preserve it
+    // Try to get original uploadedAt and sourceType to preserve them
     try {
       const getUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/ledgers/${safeDocId}${FIREBASE_API_KEY ? `?key=${FIREBASE_API_KEY}` : ""}`;
       const restRes = await fetch(getUrl);
       if (restRes.ok) {
         const data = await restRes.json();
-        if (data.fields && data.fields.uploadedAt) {
-          firestorePayload.fields.uploadedAt = data.fields.uploadedAt;
+        if (data.fields) {
+          if (data.fields.uploadedAt) firestorePayload.fields.uploadedAt = data.fields.uploadedAt;
+          if (data.fields.sourceType) firestorePayload.fields.sourceType = data.fields.sourceType;
         }
       }
     } catch (e) {}
@@ -238,6 +241,7 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
         filename: { stringValue: cleanFilename },
         size: { integerValue: String(byteLength) },
         uploadedAt: { stringValue: new Date().toISOString() },
+        sourceType: { stringValue: "python_controller" },
         csvData: { stringValue: csvData },
         syncedAt: { stringValue: new Date().toISOString() }
       }
@@ -336,6 +340,54 @@ app.get("/api/v1/status", async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- API ROUTE: Handle Manual User Ledger Uploads ---
+app.post("/api/v1/upload-manual-ledger", async (req: Request, res: Response) => {
+  try {
+    const { filename, csvData } = req.body;
+    if (!filename || !csvData || typeof csvData !== "string") {
+      return res.status(400).json({ success: false, error: "Missing filename or valid csvData string." });
+    }
+
+    // Basic server-side validation
+    if (csvData.trim().length < 10) {
+      return res.status(400).json({ success: false, error: "CSV content is too short or empty." });
+    }
+
+    const validation = validateCSV(csvData);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: `CSV Structure Validation Failed: ${validation.error}` });
+    }
+
+    const cleanFilename = filename.replace(/\\/g, "/").split("/").pop() || "uploaded_ledger.csv";
+    const safeDocId = cleanFilename.replace(/[.#$/[\]]/g, "_");
+    
+    const byteLength = new TextEncoder().encode(csvData).length;
+
+    const firestorePayload = {
+      fields: {
+        filename: { stringValue: cleanFilename },
+        size: { integerValue: String(byteLength) },
+        uploadedAt: { stringValue: new Date().toISOString() },
+        sourceType: { stringValue: "user_uploaded" },
+        csvData: { stringValue: csvData },
+        syncedAt: { stringValue: new Date().toISOString() }
+      }
+    };
+
+    await firestoreREST("PATCH", `ledgers/${safeDocId}`, firestorePayload);
+
+    return res.json({
+      success: true,
+      message: `Manual ledger ${cleanFilename} uploaded successfully to the cloud.`,
+      sourceType: "user_uploaded",
+      savedToCloud: true
+    });
+  } catch (err: any) {
+    console.error("[STAP MANUAL UPLOAD ERROR]", err);
+    return res.status(500).json({ success: false, error: err.message || "Internal serverless worker error." });
   }
 });
 

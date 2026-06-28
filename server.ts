@@ -339,6 +339,7 @@ app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Respons
             filename: safeFilename,
             size: Buffer.byteLength(csvData, "utf8"),
             uploadedAt: new Date().toISOString(),
+            sourceType: "python_controller",
             csvData: csvData,
             syncedAt: new Date().toISOString()
           }),
@@ -413,6 +414,7 @@ app.get("/api/v1/ledgers", asyncHandler(async (req: Request, res: Response) => {
             filename: data.filename,
             size: data.size,
             uploadedAt: data.uploadedAt,
+            sourceType: data.sourceType || "python_controller",
             source: existing ? "synced" : "cloud"
           });
         });
@@ -660,6 +662,59 @@ app.use((err: any, req: Request, res: Response, next: any) => {
     error: err.message || "An unexpected server error occurred."
   });
 });
+
+// --- API ROUTE: Handle Manual User Ledger Uploads ---
+app.post("/api/v1/upload-manual-ledger", asyncHandler(async (req: Request, res: Response) => {
+  const { filename, csvData } = req.body;
+  if (!filename || !csvData || typeof csvData !== "string") {
+    return res.status(400).json({ success: false, error: "Missing filename or valid csvData string in request body." });
+  }
+
+  // Basic validation
+  if (csvData.trim().length < 10) {
+    return res.status(400).json({ success: false, error: "CSV content is too short or empty." });
+  }
+
+  const validation = validateCSV(csvData);
+  if (!validation.valid) {
+    return res.status(400).json({ success: false, error: `CSV Structure Validation Failed: ${validation.error}` });
+  }
+
+  const safeFilename = path.basename(filename.replace(/\\/g, "/"));
+  const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
+
+  let savedToCloud = false;
+  if (db) {
+    try {
+      await withTimeout(
+        db.collection("ledgers").doc(safeDocId).set({
+          filename: safeFilename,
+          size: Buffer.byteLength(csvData, "utf8"),
+          uploadedAt: new Date().toISOString(),
+          sourceType: "user_uploaded",
+          csvData: csvData,
+          syncedAt: new Date().toISOString()
+        }),
+        5000,
+        "upload-manual-ledger Firestore set"
+      );
+      savedToCloud = true;
+    } catch (cloudErr) {
+      console.error("[STAP HUB] Firestore manual upload failed:", cloudErr);
+    }
+  }
+
+  if (savedToCloud) {
+    return res.json({
+      success: true,
+      message: `Manual ledger ${safeFilename} uploaded successfully.`,
+      sourceType: "user_uploaded",
+      savedToCloud
+    });
+  }
+
+  return res.status(503).json({ success: false, error: "Cloud database features are currently offline." });
+}));
 
 // Configure Vite or serve static files
 async function configureFrontend() {

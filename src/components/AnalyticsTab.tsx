@@ -55,6 +55,7 @@ interface UnifiedLedger {
   size: number;
   uploadedAt: string;
   source: "local" | "cloud" | "synced";
+  sourceType?: "python_controller" | "user_uploaded";
   csvData?: string;
 }
 
@@ -78,8 +79,8 @@ export default function AnalyticsTab() {
 
   // New sub-tab state for Analytics Tab: "explorer" or "hub"
   const [subTab, setSubTab] = useState<"explorer" | "hub">("explorer");
-  const [localLedgers, setLocalLedgers] = useState<any[]>([]);
-  const [cloudLedgers, setCloudLedgers] = useState<any[]>([]);
+  const [localLedgers, setLocalLedgers] = useState<UnifiedLedger[]>([]);
+  const [cloudLedgers, setCloudLedgers] = useState<UnifiedLedger[]>([]);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState<boolean>(true);
 
@@ -87,6 +88,9 @@ export default function AnalyticsTab() {
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [selectedLedgerIds, setSelectedLedgerIds] = useState<string[]>([]);
   const [isViewerOpen, setIsViewerOpen] = useState<boolean>(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+  const [uploadingFile, setUploadingFile] = useState<File | null>(null);
+  const [isUploadingManual, setIsUploadingManual] = useState<boolean>(false);
   const [viewingLedger, setViewingLedger] = useState<UnifiedLedger | null>(null);
   const [viewerCsvData, setViewerCsvData] = useState<string>("");
   const [isEditingViewer, setIsEditingViewer] = useState<boolean>(false);
@@ -104,6 +108,38 @@ export default function AnalyticsTab() {
       }
     } catch (err) {
       console.error("Failed to fetch local ledgers:", err);
+    }
+  };
+
+  const handleManualUpload = async () => {
+    if (!uploadingFile) return;
+
+    try {
+      setIsUploadingManual(true);
+      const text = await uploadingFile.text();
+      
+      const res = await fetch("/api/v1/upload-manual-ledger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: uploadingFile.name,
+          csvData: text
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+
+      setSyncStatus(`Manual upload successful: ${uploadingFile.name}`);
+      setIsUploadModalOpen(false);
+      setUploadingFile(null);
+      fetchLocalLedgers(); // Refresh list
+      setTimeout(() => setSyncStatus(null), 3000);
+    } catch (err: any) {
+      console.error("Manual upload error:", err);
+      alert(`Upload Error: ${err.message}`);
+    } finally {
+      setIsUploadingManual(false);
     }
   };
 
@@ -134,6 +170,7 @@ export default function AnalyticsTab() {
         filename: ledger.filename,
         size: ledger.size,
         uploadedAt: ledger.uploadedAt,
+        sourceType: ledger.sourceType || "python_controller",
         csvData: csvContent,
         syncedAt: new Date().toISOString()
       });
@@ -164,10 +201,11 @@ export default function AnalyticsTab() {
           filename: d.data().filename,
           size: d.data().size || 0,
           uploadedAt: d.data().uploadedAt,
+          sourceType: d.data().sourceType || "python_controller",
           csvData: d.data().csvData || "",
           id: d.id
         }));
-        setCloudLedgers(docs);
+        setCloudLedgers(docs as any);
       }, (error) => {
         console.error("Firestore ledgers subscription error:", error);
       });
@@ -191,6 +229,7 @@ export default function AnalyticsTab() {
         filename: c.filename,
         size: c.size,
         uploadedAt: c.uploadedAt,
+        sourceType: c.sourceType,
         source: "cloud",
         csvData: c.csvData
       });
@@ -208,6 +247,7 @@ export default function AnalyticsTab() {
           filename: l.filename,
           size: l.size,
           uploadedAt: l.uploadedAt,
+          sourceType: l.sourceType,
           source: "local"
         });
       }
@@ -768,6 +808,14 @@ export default function AnalyticsTab() {
                     className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#4E6290]/20 focus:border-[#4E6290] transition-all w-full md:w-64"
                   />
                 </div>
+                
+                <button
+                  onClick={() => setIsUploadModalOpen(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-[#4E6290] hover:bg-[#3D4F75] text-white text-xs font-black uppercase rounded-xl shadow-sm transition-all"
+                >
+                  <UploadCloud className="h-4 w-4" />
+                  <span>Upload Ledger</span>
+                </button>
 
                 <button
                   onClick={fetchLocalLedgers}
@@ -839,6 +887,7 @@ export default function AnalyticsTab() {
                         />
                       </th>
                       <th className="px-5 py-3">File Name</th>
+                      <th className="px-5 py-3">Source</th>
                       <th className="px-5 py-3">Size (KB)</th>
                       <th className="px-5 py-3">Export/Upload Date</th>
                       <th className="px-5 py-3">Storage Context</th>
@@ -875,6 +924,15 @@ export default function AnalyticsTab() {
                                 </span>
                               </div>
                             </div>
+                          </td>
+                          <td className="px-5 py-3.5 whitespace-nowrap">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter ${
+                              ledger.sourceType === "user_uploaded" 
+                                ? "bg-amber-100 text-amber-700 border border-amber-200" 
+                                : "bg-blue-100 text-blue-700 border border-blue-200"
+                            }`}>
+                              {ledger.sourceType === "user_uploaded" ? "User" : "System"}
+                            </span>
                           </td>
                           <td className="px-5 py-3.5 font-mono text-slate-600 text-[11px]">
                             {sizeInKb} KB
@@ -1648,6 +1706,104 @@ export default function AnalyticsTab() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. MODAL: MANUAL LEDGER UPLOAD */}
+      {isUploadModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div 
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fadeIn" 
+            onClick={() => !isUploadingManual && setIsUploadModalOpen(false)}
+          />
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden animate-scaleIn">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Manual Ledger Upload</h3>
+              <button onClick={() => setIsUploadModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {!uploadingFile ? (
+                <div 
+                  className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center space-y-3 hover:border-[#4E6290] hover:bg-slate-50/50 transition-all cursor-pointer group"
+                  onClick={() => document.getElementById('manual-file-input')?.click()}
+                >
+                  <div className="mx-auto w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center text-slate-400 group-hover:text-[#4E6290] group-hover:scale-110 transition-all">
+                    <UploadCloud className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-700">Click to select CSV ledger</p>
+                    <p className="text-[10px] text-slate-400">Must follow STAP output format (.csv, .txt)</p>
+                  </div>
+                  <input 
+                    id="manual-file-input"
+                    type="file" 
+                    className="hidden" 
+                    accept=".csv,.txt"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setUploadingFile(file);
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-[#4E6290] text-white rounded-lg">
+                      <FileSpreadsheet className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-black text-slate-800 truncate">{uploadingFile.name}</p>
+                      <p className="text-[10px] text-slate-500 font-bold">{(uploadingFile.size / 1024).toFixed(2)} KB • Ready to upload</p>
+                    </div>
+                    <button 
+                      onClick={() => setUploadingFile(null)}
+                      className="text-slate-400 hover:text-rose-500"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="text-[10px] bg-amber-50 text-amber-700 p-2 rounded-lg border border-amber-100 flex gap-2">
+                    <Info className="h-3.5 w-3.5 shrink-0" />
+                    <span>This file will be marked as <b>User Uploaded</b> in the master ledger list.</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setIsUploadModalOpen(false)}
+                  disabled={isUploadingManual}
+                  className="flex-1 px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleManualUpload}
+                  disabled={!uploadingFile || isUploadingManual}
+                  className={`flex-1 px-4 py-2 text-xs font-black uppercase rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 ${
+                    !uploadingFile || isUploadingManual 
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed" 
+                      : "bg-[#4E6290] hover:bg-[#3D4F75] text-white"
+                  }`}
+                >
+                  {isUploadingManual ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 w-3.5" />
+                      <span>Confirm Upload</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
