@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Lane, LightState, User, Role } from "../types";
-import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X } from "lucide-react";
+import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X, Clock } from "lucide-react";
 import { getFirebaseConfig, saveFirebaseConfig, getFirebaseInstances, handleFirestoreError, OperationType, STAPDatabaseManager } from "../firebase";
 import { collection, onSnapshot, doc, addDoc, setDoc, deleteDoc } from "firebase/firestore";
 
@@ -39,7 +39,10 @@ export default function SettingsTab({
   const [errorMessage, setErrorMessage] = useState("");
 
   // Sub-tabs navigation state
-  const [activeSubTab, setActiveSubTab] = useState<"general" | "users">("general");
+  const [activeSubTab, setActiveSubTab] = useState<"general" | "users" | "pending">("general");
+
+  const activeUsers = users.filter((u) => u.role !== "Pending");
+  const pendingUsers = users.filter((u) => u.role === "Pending");
 
   // User Management state
   const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(false);
@@ -317,10 +320,28 @@ export default function SettingsTab({
           }`}
         >
           <Users className="h-4 w-4" />
-          User Management
+          Active Users
           <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full font-bold font-mono">
-            {users.length}
+            {activeUsers.length}
           </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("pending")}
+          className={`flex items-center gap-2 px-5 py-3 text-xs font-bold transition-all border-b-2 cursor-pointer -mb-px rounded-t-xl whitespace-nowrap ${
+            activeSubTab === "pending"
+              ? "border-amber-600 text-amber-700 bg-white"
+              : "border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <Clock className="h-4 w-4" />
+          Pending Requests
+          {pendingUsers.length > 0 && (
+            <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full font-bold font-mono animate-pulse">
+              {pendingUsers.length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -600,9 +621,9 @@ export default function SettingsTab({
                 <RefreshCw className="h-6 w-6 animate-spin text-slate-300" />
                 <span className="text-xs font-mono">Synchronizing live user catalog...</span>
               </div>
-            ) : users.length === 0 ? (
+            ) : activeUsers.length === 0 ? (
               <div className="text-center py-12 bg-slate-50 border border-dashed border-slate-200 rounded-xl space-y-2">
-                <p className="text-xs text-slate-500 font-bold">No registered users found</p>
+                <p className="text-xs text-slate-500 font-bold">No active users found</p>
                 <p className="text-[11px] text-slate-400 font-medium">Click "Add New User" to register the first system account.</p>
               </div>
             ) : (
@@ -617,7 +638,7 @@ export default function SettingsTab({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-150">
-                    {users.map((u) => (
+                    {activeUsers.map((u) => (
                       <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-3">
@@ -684,6 +705,94 @@ export default function SettingsTab({
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === "pending" && (
+        <div className="space-y-6 animate-fadeIn">
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-50 border border-amber-100 text-amber-700 rounded-xl">
+                  <Clock className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">Pending Access Requests</h3>
+                  <p className="text-xs text-slate-500 font-medium">Review and approve new operator accounts</p>
+                </div>
+              </div>
+            </div>
+
+            {pendingUsers.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 border border-dashed border-slate-200 rounded-xl space-y-2">
+                <p className="text-xs text-slate-500 font-bold">No pending requests</p>
+                <p className="text-[11px] text-slate-400 font-medium">All operator accounts have been approved.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                      <th className="px-5 py-3.5">User Profile</th>
+                      <th className="px-5 py-3.5">Request Details</th>
+                      <th className="px-5 py-3.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-150">
+                    {pendingUsers.map((u) => (
+                      <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-amber-50 border border-amber-100 flex items-center justify-center text-xs font-extrabold text-amber-700 uppercase select-none overflow-hidden shrink-0">
+                              {u.avatarUrl ? (
+                                <img src={u.avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                (u.name || "U").slice(0, 2)
+                              )}
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                <span>{u.name}</span>
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                                <Mail className="h-3 w-3 shrink-0" />
+                                <span className="truncate max-w-[180px]">{u.email}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <div className="text-[10px] text-slate-500 font-semibold italic">
+                            Requested at: {u.lastLogin ? new Date(u.lastLogin).toLocaleString() : "Unknown"}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateRole(u.id, "Operations Analyst")}
+                              className="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-bold text-[10px] rounded-lg transition-all border border-emerald-200 flex items-center gap-1.5"
+                            >
+                              <Check className="h-3 w-3" />
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setUserToDelete(u)}
+                              className="px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold text-[10px] rounded-lg transition-all border border-rose-200 flex items-center gap-1.5"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Reject
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

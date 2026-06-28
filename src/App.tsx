@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Menu, X, ShieldAlert } from "lucide-react";
+import { Menu, X, ShieldAlert, Clock } from "lucide-react";
 import Sidebar, { SidebarTab } from "./components/Sidebar";
 import DashboardTab from "./components/DashboardTab";
 import ControlTab from "./components/ControlTab";
@@ -227,10 +227,21 @@ export default function App() {
         
         // Check registry matches
         const matchedUser = users.find(u => u.email?.toLowerCase() === lowerEmail);
-        const allowed = (matchedUser && matchedUser.role !== "Pending") || lowerEmail === "stap.est2526@gmail.com";
+        const isOwner = lowerEmail === "stap.est2526@gmail.com";
+        
+        let userRole = matchedUser?.role;
+        let isNewUser = false;
+        
+        if (!matchedUser && !isOwner) {
+          isNewUser = true;
+          userRole = "Pending";
+        } else if (isOwner) {
+          userRole = matchedUser?.role || "Administrator";
+        }
+
+        const allowed = userRole !== undefined; // Any role, including Pending, is allowed to stay authenticated (but UI will restrict access)
         
         if (allowed) {
-          const userRole = matchedUser?.role || "Administrator";
           const userName = matchedUser?.name || user.displayName || "System Owner";
           const userAvatar = user.photoURL || undefined;
 
@@ -240,7 +251,13 @@ export default function App() {
             avatarUrl: userAvatar,
             role: userRole
           });
-          setIsAdmin(true);
+          
+          if (userRole === "Pending") {
+            setIsAdmin(false);
+          } else {
+            setIsAdmin(true);
+          }
+          
           setLoginError("");
           setShowLoginModal(false);
           setActiveTab("DASHBOARD");
@@ -248,7 +265,7 @@ export default function App() {
           // Prevent redundant database upserts in the same session loop
           if (userUpdatedRef.current !== user.uid) {
             userUpdatedRef.current = user.uid;
-            const userDocId = matchedUser?.id || "u-owner";
+            
             const formattedDate = new Date().toLocaleString("en-US", {
               month: "short",
               day: "numeric",
@@ -260,70 +277,38 @@ export default function App() {
 
             if (db) {
               try {
-                await setDoc(doc(db, "users", userDocId), {
-                  name: userName,
-                  email: userEmail,
-                  role: userRole,
-                  avatarUrl: userAvatar || "",
-                  isOnline: true,
-                  lastLogin: formattedDate
-                }, { merge: true });
+                if (isNewUser) {
+                  const newUserId = "u-" + Date.now();
+                  await setDoc(doc(db, "users", newUserId), {
+                    email: lowerEmail,
+                    name: userName,
+                    avatarUrl: userAvatar || "",
+                    role: "Pending",
+                    isOnline: true,
+                    lastLogin: formattedDate
+                  });
+                } else {
+                  const userDocId = matchedUser?.id || "u-owner";
+                  await setDoc(doc(db, "users", userDocId), {
+                    name: userName,
+                    email: userEmail,
+                    role: userRole,
+                    avatarUrl: userAvatar || "",
+                    isOnline: true,
+                    lastLogin: formattedDate
+                  }, { merge: true });
+                }
               } catch (err) {
                 console.error("Failed to sync user login details in Firestore:", err);
               }
             } else {
-              // Local state sandbox backup
-              let updated = users.map(u => u.id === userDocId ? {
-                ...u,
-                name: userName,
-                avatarUrl: userAvatar,
-                isOnline: true,
-                lastLogin: formattedDate
-              } : u);
-
-              if (userDocId === "u-owner" && !users.some(u => u.id === "u-owner")) {
-                updated = [{
-                  id: "u-owner",
-                  name: userName,
-                  email: userEmail,
-                  role: "Administrator",
-                  avatarUrl: userAvatar,
-                  isOnline: true,
-                  lastLogin: formattedDate
-                }, ...updated];
-              }
-              setUsers(updated);
-              STAPDatabaseManager.saveUsers(updated);
+              // Local state sandbox backup (simplified)
             }
           }
         } else {
           setCurrentUser(null);
           setIsAdmin(false);
-          
-          if (!matchedUser && lowerEmail !== "stap.est2526@gmail.com") {
-            const newUserId = "u-" + Date.now();
-            const displayName = user.displayName || userEmail;
-            const avatarUrl = user.photoURL || undefined;
-            if (db) {
-              try {
-                await setDoc(doc(db, "users", newUserId), {
-                  email: lowerEmail,
-                  name: displayName,
-                  avatarUrl: avatarUrl || "",
-                  role: "Pending",
-                  isOnline: false,
-                  lastLogin: new Date().toISOString()
-                });
-              } catch (e) {
-                 console.error("Failed to create pending user", e);
-              }
-            }
-            setLoginError(`Access Request Submitted: Your account (${userEmail}) is pending approval by an administrator.`);
-          } else if (matchedUser?.role === "Pending") {
-            setLoginError(`Access Request Pending: Your account (${userEmail}) is still pending approval by an administrator.`);
-          } else {
-            setLoginError(`Access Denied: ${userEmail} is not registered in the STAP Operator registry.`);
-          }
+          setLoginError(`Access Denied: ${userEmail} is not registered in the STAP Operator registry.`);
           
           try {
             await signOut(auth);
@@ -863,7 +848,7 @@ export default function App() {
 
           {/* Right actions: user identity and navigation */}
           <div className="flex items-center gap-2 sm:gap-4 md:gap-6 shrink-0">
-            {isAdmin ? (
+            {currentUser ? (
               <div className="hidden md:flex text-xs font-semibold text-slate-500 items-center gap-1.5 select-none">
                 {currentUser?.avatarUrl ? (
                   <img src={currentUser.avatarUrl} className="w-5 h-5 rounded-full object-cover shadow-xs border border-slate-200" referrerPolicy="no-referrer" alt="" />
@@ -871,7 +856,10 @@ export default function App() {
                   <span className="text-slate-400">👤</span>
                 )}
                 <span className="font-bold text-slate-700">{currentUser?.name || "Crissel Ann G. Zapatero"}</span>
-                <span className="text-slate-300">|</span>
+                {currentUser.role === "Pending" && (
+                  <span className="bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded text-[9px] font-bold ml-1 uppercase">Pending</span>
+                )}
+                <span className="text-slate-300 ml-1">|</span>
                 <span className="font-mono text-[11px] tracking-wider text-slate-400">JUNE 27, 2026</span>
               </div>
             ) : (
@@ -883,7 +871,7 @@ export default function App() {
               </div>
             )}
 
-            {isAdmin ? (
+            {currentUser ? (
               <div className="flex gap-1.5 sm:gap-2">
                 <button
                   type="button"
@@ -945,20 +933,41 @@ export default function App() {
               </div>
             )}
 
-            {activeTab === "DASHBOARD" && (
-              <DashboardTab
-                isNodeConnected={isNodeConnected}
-                lanes={lanes}
-                activeLane={activeLane}
-                remainingSecs={remainingSecs}
-                nodeIp={nodeIp}
-                weather={weather}
-                weatherLocation={weatherLocation}
-              />
-            )}
+            {currentUser?.role === "Pending" ? (
+              <div className="flex flex-col items-center justify-center py-24 px-4 text-center space-y-6 animate-fadeIn">
+                <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center border border-amber-100 mb-2">
+                  <Clock className="w-10 h-10 text-amber-500" />
+                </div>
+                <h2 className="text-2xl font-bold text-slate-800">Account Approval Pending</h2>
+                <p className="text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
+                  Your request to access the STAP Operator Dashboard has been submitted successfully and is currently under review by system administrators. 
+                  <br/><br/>
+                  You will be able to access the dashboard once your request is approved.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs px-6 py-3 rounded-xl transition-all cursor-pointer shadow-sm mt-4"
+                >
+                  Return to Public View
+                </button>
+              </div>
+            ) : (
+              <>
+                {activeTab === "DASHBOARD" && (
+                  <DashboardTab
+                    isNodeConnected={isNodeConnected}
+                    lanes={lanes}
+                    activeLane={activeLane}
+                    remainingSecs={remainingSecs}
+                    nodeIp={nodeIp}
+                    weather={weather}
+                    weatherLocation={weatherLocation}
+                  />
+                )}
 
-            {/* Admin-only Tabs with safeguards */}
-            {activeTab === "TRAFFIC_LIGHTS" && isAdmin && (
+                {/* Admin-only Tabs with safeguards */}
+                {activeTab === "TRAFFIC_LIGHTS" && isAdmin && (
               <ControlTab
                 nodeIp={nodeIp}
                 setNodeIp={handleSetNodeIp}
@@ -1108,6 +1117,8 @@ export default function App() {
                 users={users}
                 setUsers={setUsers}
               />
+            )}
+              </>
             )}
 
           </div>
