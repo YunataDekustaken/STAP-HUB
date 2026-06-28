@@ -15,6 +15,32 @@ process.on("uncaughtException", (error) => {
   console.error("[STAP HUB] Uncaught Exception occurred:", error);
 });
 
+// Robust Promise timeout wrapper to prevent hanging client SDK calls in serverless environments
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 5000, contextName: string = "Firestore operation"): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${contextName} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+// Helper to wrap async routes and forward errors to Express global middleware
+const asyncHandler = (fn: (req: Request, res: Response, next: any) => Promise<any>) => {
+  return (req: Request, res: Response, next: any) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+};
+
 // Helper to resolve the correct uploads folder. On Vercel, we must write to /tmp.
 function getUploadsDir(): string {
   const isVercel = !!process.env.VERCEL;
@@ -103,10 +129,14 @@ if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId) {
 async function syncStateToFirestore() {
   if (!db) return;
   try {
-    await setDoc(doc(db, "system", "state"), {
-      ...systemState,
-      updatedAt: new Date().toISOString()
-    });
+    await withTimeout(
+      setDoc(doc(db, "system", "state"), {
+        ...systemState,
+        updatedAt: new Date().toISOString()
+      }),
+      5000,
+      "syncStateToFirestore setDoc"
+    );
   } catch (err) {
     console.error("[STAP HUB] Error syncing state to Firestore:", err);
   }
@@ -116,7 +146,11 @@ async function syncStateToFirestore() {
 async function loadStateFromFirestore() {
   if (!db) return;
   try {
-    const snap = await getDoc(doc(db, "system", "state"));
+    const snap = await withTimeout(
+      getDoc(doc(db, "system", "state")),
+      5000,
+      "loadStateFromFirestore getDoc"
+    );
     if (snap.exists()) {
       const data = snap.data();
       systemState = {
@@ -153,7 +187,7 @@ app.use((req, res, next) => {
 
 // --- API ROUTE: Receive Real-Time YOLO Snapshot Postings ---
 // Matches Python: STAP_HUB_URL = "https://<app-url>/api/v1/snapshots"
-app.post("/api/v1/snapshots", async (req: Request, res: Response) => {
+app.post("/api/v1/snapshots", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
     return res.status(401).json({ success: false, error: "Unauthorized Bearer Token" });
@@ -195,11 +229,11 @@ app.post("/api/v1/snapshots", async (req: Request, res: Response) => {
   await syncStateToFirestore();
 
   res.json({ success: true, message: `Snapshot parsed successfully for ${laneKey}` });
-});
+}));
 
 // --- API ROUTE: Hardware Node Heartbeat ---
 // Matches Python: STAP_HEARTBEAT_URL = "https://<app-url>/api/v1/heartbeat"
-app.post("/api/v1/heartbeat", async (req: Request, res: Response) => {
+app.post("/api/v1/heartbeat", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
     return res.status(401).json({ success: false, error: "Unauthorized Heartbeat Token" });
@@ -210,11 +244,11 @@ app.post("/api/v1/heartbeat", async (req: Request, res: Response) => {
   await syncStateToFirestore();
 
   res.json({ success: true, status: "alive" });
-});
+}));
 
 // --- API ROUTE: Upload CSV Ledger Data ---
 // Save finalized CSV ledger data to server directory and/or Firebase Firestore Cloud
-app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
+app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
     return res.status(401).json({ success: false, error: "Unauthorized Bearer Token" });
@@ -244,21 +278,25 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
       console.warn("[STAP HUB] Local write bypassed:", fsErr);
     }
 
-    // 2. Upload directly to Firestore Cloud Database if connected
+    // 2. Upload directly to Firestore Cloud Database if connected (best-effort, max 5s timeout)
     let savedToCloud = false;
     if (db) {
       try {
-        await setDoc(doc(db, "ledgers", safeDocId), {
-          filename: safeFilename,
-          size: Buffer.byteLength(csvData, "utf8"),
-          uploadedAt: new Date().toISOString(),
-          csvData: csvData,
-          syncedAt: new Date().toISOString()
-        });
+        await withTimeout(
+          setDoc(doc(db, "ledgers", safeDocId), {
+            filename: safeFilename,
+            size: Buffer.byteLength(csvData, "utf8"),
+            uploadedAt: new Date().toISOString(),
+            csvData: csvData,
+            syncedAt: new Date().toISOString()
+          }),
+          5000,
+          "upload-ledger Firestore setDoc"
+        );
         savedToCloud = true;
         console.log(`[STAP HUB] Ledger saved to Firestore Cloud successfully: ${safeFilename}`);
       } catch (cloudErr) {
-        console.error("[STAP HUB] Firestore upload failed:", cloudErr);
+        console.error("[STAP HUB] Firestore upload failed or timed out:", cloudErr);
       }
     }
 
@@ -276,10 +314,10 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
     console.error("[STAP HUB] Failed to save ledger upload:", err);
     return res.status(500).json({ success: false, error: err.message || "Failed to save file on server." });
   }
-});
+}));
 
 // --- API ROUTE: List all uploaded ledgers ---
-app.get("/api/v1/ledgers", async (req: Request, res: Response) => {
+app.get("/api/v1/ledgers", asyncHandler(async (req: Request, res: Response) => {
   try {
     const ledgersMap = new Map<string, any>();
 
@@ -309,8 +347,12 @@ app.get("/api/v1/ledgers", async (req: Request, res: Response) => {
     if (db) {
       try {
         const { getDocs, collection } = await import("firebase/firestore");
-        const querySnapshot = await getDocs(collection(db, "ledgers"));
-        querySnapshot.forEach((docSnap) => {
+        const querySnapshot = await withTimeout(
+          getDocs(collection(db, "ledgers")),
+          5000,
+          "list ledgers getDocs"
+        );
+        querySnapshot.forEach((docSnap: any) => {
           const data = docSnap.data();
           const existing = ledgersMap.get(data.filename);
           ledgersMap.set(data.filename, {
@@ -334,10 +376,10 @@ app.get("/api/v1/ledgers", async (req: Request, res: Response) => {
     console.error("[STAP HUB] Failed to list ledgers:", err);
     return res.status(500).json({ success: false, error: err.message || "Failed to list files." });
   }
-});
+}));
 
 // --- API ROUTE: Get a specific ledger's content ---
-app.get("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
+app.get("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Response) => {
   try {
     const safeFilename = path.basename(req.params.filename);
     const filePath = path.join(getUploadsDir(), safeFilename);
@@ -352,7 +394,11 @@ app.get("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
       try {
         const { getDoc, doc } = await import("firebase/firestore");
         const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
-        const docSnap = await getDoc(doc(db, "ledgers", safeDocId));
+        const docSnap = await withTimeout(
+          getDoc(doc(db, "ledgers", safeDocId)),
+          5000,
+          "get ledger getDoc"
+        );
         if (docSnap.exists()) {
           const data = docSnap.data();
           return res.json({ success: true, filename: safeFilename, csvData: data.csvData });
@@ -367,10 +413,10 @@ app.get("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
     console.error("[STAP HUB] Failed to retrieve ledger content:", err);
     return res.status(500).json({ success: false, error: err.message || "Failed to retrieve file content." });
   }
-});
+}));
 
 // --- API ROUTE: Delete a specific ledger ---
-app.delete("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
+app.delete("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Response) => {
   try {
     const safeFilename = path.basename(req.params.filename);
     const filePath = path.join(getUploadsDir(), safeFilename);
@@ -386,7 +432,11 @@ app.delete("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
       try {
         const { deleteDoc, doc } = await import("firebase/firestore");
         const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
-        await deleteDoc(doc(db, "ledgers", safeDocId));
+        await withTimeout(
+          deleteDoc(doc(db, "ledgers", safeDocId)),
+          5000,
+          "delete ledger deleteDoc"
+        );
         deletedCloud = true;
       } catch (dbErr) {
         console.error("[STAP HUB] Failed to delete ledger from Firestore:", dbErr);
@@ -404,10 +454,10 @@ app.delete("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
     console.error("[STAP HUB] Failed to delete ledger:", err);
     return res.status(500).json({ success: false, error: err.message || "Failed to delete file." });
   }
-});
+}));
 
 // --- API ROUTE: Integrated Hub Status State getter ---
-app.get("/api/v1/status", async (req: Request, res: Response) => {
+app.get("/api/v1/status", asyncHandler(async (req: Request, res: Response) => {
   await loadStateFromFirestore();
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
   // Be generous: 20 seconds. If any packet has been parsed in the last 20 seconds
@@ -417,10 +467,10 @@ app.get("/api/v1/status", async (req: Request, res: Response) => {
     nodeOnline,
     serverTime: new Date().toISOString(),
   });
-});
+}));
 
 // --- API ROUTE: Force Set Intersection Mode or Lights (Used by Web Console/Dashboard) ---
-app.post("/api/v1/control", async (req: Request, res: Response) => {
+app.post("/api/v1/control", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   const userAgent = req.headers["user-agent"] || "";
   const isFromPython = (authHeader === `Bearer ${AUTHORIZATION_TOKEN}`) || userAgent.toLowerCase().includes("python");
@@ -469,6 +519,15 @@ app.post("/api/v1/control", async (req: Request, res: Response) => {
   await syncStateToFirestore();
 
   res.json({ success: true, state: systemState });
+}));
+
+// Global Express error-handling middleware registered after all routes to prevent Vercel 500 overrides
+app.use((err: any, req: Request, res: Response, next: any) => {
+  console.error("[STAP HUB] Global error caught:", err);
+  res.status(500).json({
+    success: false,
+    error: err.message || "An unexpected server error occurred."
+  });
 });
 
 // Configure Vite or serve static files

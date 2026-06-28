@@ -61,5 +61,15 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isOperator() || isSignedIn();
     }
+
+    // 7. SYSTEM STATE (trusted server-side database synchronization)
+    match /system/{stateId} {
+      allow read, write: if true;
+    }
+
+    // 8. DYNAMIC VEHICLE LEDGERS (trusted server-side uploaded CSV ledgers)
+    match /ledgers/{ledgerId} {
+      allow read, write: if true;
+    }
   }
 }
