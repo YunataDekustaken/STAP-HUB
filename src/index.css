@@ -1,0 +1,183 @@
+@import "tailwindcss";
+
+/* Global smooth transition for styling items */
+* {
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+              border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+              color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Base Light Mode variables and overrides */
+.light-mode {
+  color-scheme: light;
+}
+
+/* Root level container overrides */
+.light-mode #stap-root,
+.light-mode main,
+.light-mode aside {
+  background-color: #f8fafc !important; /* slate-50 */
+  color: #0f172a !important; /* slate-900 */
+}
+
+/* Sidebar background overrides */
+.light-mode aside {
+  background-color: #f1f5f9 !important; /* slate-100 */
+  border-right-color: #e2e8f0 !important; /* slate-200 */
+}
+
+.light-mode aside .bg-slate-900\/60 {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Header background overrides */
+.light-mode #stap-header {
+  background-color: #ffffff !important;
+  border-bottom-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+/* Card background overrides */
+.light-mode .bg-slate-900,
+.light-mode .bg-slate-950,
+.light-mode .bg-slate-910,
+.light-mode .bg-slate-950\/80,
+.light-mode .bg-slate-900\/90,
+.light-mode .bg-slate-900\/60,
+.light-mode .bg-slate-950\/50 {
+  background-color: #ffffff !important; /* pristine card white */
+}
+
+/* Panel headers inside tabs */
+.light-mode .bg-slate-900\/90.backdrop-blur-sm {
+  background-color: rgba(241, 245, 249, 0.95) !important; /* slate-100 */
+}
+
+/* Dark utility pills, buttons and inputs inside light mode */
+.light-mode .bg-slate-800,
+.light-mode .bg-slate-800\/80,
+.light-mode .bg-slate-800\/50,
+.light-mode select,
+.light-mode input[type="text"],
+.light-mode input[type="number"],
+.light-mode input[type="password"] {
+  background-color: #f1f5f9 !important; /* slate-100 */
+  color: #0f172a !important; /* slate-900 */
+  border-color: #cbd5e1 !important; /* slate-300 */
+}
+
+.light-mode selectOption {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Text selections & focus rings */
+.light-mode .hover\:bg-slate-900\/85:hover,
+.light-mode .hover\:bg-slate-800\/60:hover {
+  background-color: #cbd5e1 !important; /* slate-300 focus hover */
+}
+
+/* Focus on active sidebar tabs */
+.light-mode aside button.bg-slate-800 {
+  background-color: #ffffff !important;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05) !important;
+}
+
+/* Primary text replacements for high-contrast */
+.light-mode .text-white,
+.light-mode .text-slate-100 {
+  color: #0f172a !important; /* slate-900 */
+}
+
+.light-mode .text-slate-200 {
+  color: #1e293b !important; /* slate-800 */
+}
+
+.light-mode .text-slate-300 {
+  color: #334155 !important; /* slate-700 */
+}
+
+.light-mode .text-slate-400 {
+  color: #475569 !important; /* slate-600 */
+}
+
+.light-mode .text-slate-500 {
+  color: #64748b !important; /* slate-500 */
+}
+
+/* Force light status headers/tags to be legible, keeping accent green/red colored */
+.light-mode .text-emerald-400 {
+  color: #059669 !important; /* emerald-600 */
+}
+.light-mode .bg-emerald-500\/10 {
+  background-color: #ecfdf5 !important; /* emerald-50 bg */
+  border-color: #a7f3d0 !important; /* emerald-200 border */
+}
+
+.light-mode .text-amber-400 {
+  color: #d97706 !important; /* amber-600 */
+}
+.light-mode .bg-amber-500\/10 {
+  background-color: #fffbeb !important; /* amber-50 bg */
+  border-color: #fde68a !important; /* amber-200 border */
+}
+
+.light-mode .text-rose-450,
+.light-mode .text-rose-400 {
+  color: #dc2626 !important; /* red-600 */
+}
+.light-mode .text-rose-500 {
+  color: #b91c1c !important; /* red-700 */
+}
+
+.light-mode .bg-rose-500\/10 {
+  background-color: #fef2f2 !important; /* red-50 */
+  border-color: #fecaca !important; /* red-200 */
+}
+
+.light-mode .bg-cyan-500\/10 {
+  background-color: #ecfeff !important; /* cyan-50 */
+  border-color: #a5f3fc !important; /* cyan-200 */
+}
+.light-mode .text-cyan-400 {
+  color: #0891b2 !important; /* cyan-600 */
+}
+
+/* Border overrides */
+.light-mode .border-slate-800,
+.light-mode .border-slate-900,
+.light-mode .border-slate-850,
+.light-mode .border-slate-850\/60,
+.light-mode .border-slate-700\/50,
+.light-mode .border-slate-700\/40,
+.light-mode .border-slate-700,
+.light-mode .divide-slate-800 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important; /* slate-200 */
+}
+
+/* Table styling fixes */
+.light-mode thead.bg-slate-900\/50 {
+  background-color: #f1f5f9 !important;
+}
+
+.light-mode tbody tr {
+  border-bottom-color: #f1f5f9 !important;
+}
+.light-mode tbody tr:hover {
+  background-color: #f8fafc !important;
+}
+
+/* Custom indicator components style corrections */
+.light-mode .text-yellow-500 {
+  color: #ca8a04 !important;
+}
+
+.light-mode #toggle-weather {
+  border-color: #cbd5e1 !important;
+}
+.light-mode #toggle-weather:hover,
+.light-mode #toggle-theme:hover {
+  background-color: #e2e8f0 !important;
+}

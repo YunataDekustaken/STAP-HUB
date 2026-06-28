@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "TrafficHistoryLog": {
+      "title": "Traffic History Log",
+      "description": "Snapshots of regional intersection congestion logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "north": { "type": "object" },
+        "south": { "type": "object" },
+        "east": { "type": "object" },
+        "west": { "type": "object" },
+        "activeLane": { "type": "string" },
+        "mode": { "type": "string" },
+        "weather": { "type": "string" },
+        "triggeredBy": { "type": "string" }
+      },
+      "required": ["timestamp", "activeLane", "mode", "weather"]
+    },
+    "FootageRequest": {
+      "title": "Footage Request",
+      "description": "Public CCTV footage requests for academic or insurance purposes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "requesterName": { "type": "string" },
+        "email": { "type": "string" },
+        "organization": { "type": "string" },
+        "contact": { "type": "string" },
+        "address": { "type": "string" },
+        "nature": { "type": "string" },
+        "handledBy": { "type": "string" },
+        "footageDate": { "type": "string" },
+        "camera": { "type": "string" },
+        "timeRange": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string" },
+        "dateSubmitted": { "type": "string" }
+      },
+      "required": ["requesterName", "email", "camera", "footageDate", "status"]
+    },
+    "IncidentReport": {
+      "title": "Incident Report",
+      "description": "Citizen and officer incident logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "lane": { "type": "string" },
+        "type": { "type": "string" },
+        "reporterName": { "type": "string" },
+        "reporterContact": { "type": "string" },
+        "timeReported": { "type": "string" },
+        "status": { "type": "string" },
+        "description": { "type": "string" },
+        "severity": { "type": "string" }
+      },
+      "required": ["lane", "type", "reporterName", "status", "severity"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Public advisories and maintenance bulletins",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "content": { "type": "string" },
+        "datePublished": { "type": "string" },
+        "author": { "type": "string" }
+      },
+      "required": ["title", "category", "content", "datePublished", "author"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Registered system user profile with access rights",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["Administrator", "Traffic Commissioner", "Operations Analyst", "Inspector"] }
+      },
+      "required": ["name", "email", "role"]
+    }
+  },
+  "firestore": {
+    "traffic_logs": {
+      "schema": "TrafficHistoryLog",
+      "description": "History of intersection traffic performance records"
+    },
+    "footage_requests": {
+      "schema": "FootageRequest",
+      "description": "Citizen requests for CCTV logs"
+    },
+    "incident_reports": {
+      "schema": "IncidentReport",
+      "description": "Citizen and operator reported traffic incidents"
+    },
+    "announcements": {
+      "schema": "Announcement",
+      "description": "Traffic advisories and maintenance notifications"
+    },
+    "users": {
+      "schema": "User",
+      "description": "System operators, administrators, and analytics accounts"
+    }
+  }
+}

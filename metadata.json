@@ -1,0 +1,8 @@
+{
+  "name": "Remix: STAP Traffic Hub",
+  "description": "Smart Traffic Automation Program (STAP) complete with real-time road density tracking, ESP32 controller linkages, and city planner analytics panels.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
