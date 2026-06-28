@@ -618,7 +618,7 @@ export default function SettingsTab({
                               {u.avatarUrl ? (
                                 <img src={u.avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                               ) : (
-                                u.name.slice(0, 2)
+                                (u.name || "U").slice(0, 2)
                               )}
                             </div>
                             <div>
