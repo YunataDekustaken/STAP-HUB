@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 
 // Set up server-side type and state structures to track physical hardware node status
@@ -117,6 +118,38 @@ async function startServer() {
 
     systemState.heartbeatTime = Date.now();
     res.json({ success: true, status: "alive" });
+  });
+
+  // --- API ROUTE: Upload CSV Ledger Data ---
+  // Save finalized CSV ledger data to server directory
+  app.post("/api/v1/upload-ledger", (req: Request, res: Response) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
+      return res.status(401).json({ success: false, error: "Unauthorized Bearer Token" });
+    }
+
+    const { filename, csvData } = req.body;
+    if (!filename || typeof csvData !== "string") {
+      return res.status(400).json({ success: false, error: "Missing filename or valid csvData string in request body." });
+    }
+
+    try {
+      const uploadsDir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+
+      // Secure the filename to prevent path traversal
+      const safeFilename = path.basename(filename);
+      const filePath = path.join(uploadsDir, safeFilename);
+
+      fs.writeFileSync(filePath, csvData, "utf8");
+      console.log(`[STAP HUB] Ledger saved successfully: ${safeFilename}`);
+      return res.json({ success: true, message: `Ledger ${safeFilename} uploaded and saved successfully.` });
+    } catch (err: any) {
+      console.error("[STAP HUB] Failed to save ledger upload:", err);
+      return res.status(500).json({ success: false, error: err.message || "Failed to save file on server." });
+    }
   });
 
   // --- API ROUTE: Integrated Hub Status State getter ---
