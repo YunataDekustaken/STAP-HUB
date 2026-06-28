@@ -185,6 +185,18 @@ app.use((req, res, next) => {
   next();
 });
 
+// --- API ROUTE: Debug Version Info (No auth required) ---
+app.get("/api/v1/debug-version", (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    buildMarker: "stap-hub-debug-v1",
+    firebaseConfigured: !!db,
+    nodeEnv: process.env.NODE_ENV || null,
+    isVercel: !!process.env.VERCEL,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // --- API ROUTE: Receive Real-Time YOLO Snapshot Postings ---
 // Matches Python: STAP_HUB_URL = "https://<app-url>/api/v1/snapshots"
 app.post("/api/v1/snapshots", asyncHandler(async (req: Request, res: Response) => {
