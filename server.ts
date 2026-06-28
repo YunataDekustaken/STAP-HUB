@@ -1,12 +1,25 @@
 import express, { Request, Response } from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 
 dotenv.config();
+
+// Helper to resolve the correct uploads folder. On Vercel, we must write to /tmp.
+function getUploadsDir(): string {
+  const isVercel = !!process.env.VERCEL;
+  const dir = isVercel ? "/tmp/uploads" : path.join(process.cwd(), "uploads");
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+      console.warn(`[STAP HUB] Failed to create uploads directory at ${dir}:`, err);
+    }
+  }
+  return dir;
+}
 
 // Set up server-side type and state structures to track physical hardware node status
 interface LaneData {
@@ -205,15 +218,10 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
   }
 
   try {
-    // 1. Save locally as fallback (only works on environment with writeable fs)
+    // 1. Save locally as fallback (works on writeable fs, including Vercel's /tmp/uploads)
     let savedLocally = false;
     try {
-      const uploadsDir = path.join(process.cwd(), "uploads");
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-
-      // Secure the filename to prevent path traversal
+      const uploadsDir = getUploadsDir();
       const safeFilename = path.basename(filename);
       const filePath = path.join(uploadsDir, safeFilename);
 
@@ -221,7 +229,7 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
       savedLocally = true;
       console.log(`[STAP HUB] Ledger saved locally: ${safeFilename}`);
     } catch (fsErr) {
-      console.warn("[STAP HUB] Local write bypassed (expected on serverless environments):", fsErr);
+      console.warn("[STAP HUB] Local write bypassed:", fsErr);
     }
 
     // 2. Upload directly to Firestore Cloud Database if connected
@@ -261,7 +269,7 @@ app.get("/api/v1/ledgers", async (req: Request, res: Response) => {
     const ledgersMap = new Map<string, any>();
 
     // 1. Load local logs if any
-    const uploadsDir = path.join(process.cwd(), "uploads");
+    const uploadsDir = getUploadsDir();
     if (fs.existsSync(uploadsDir)) {
       try {
         const files = fs.readdirSync(uploadsDir);
@@ -317,7 +325,7 @@ app.get("/api/v1/ledgers", async (req: Request, res: Response) => {
 app.get("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
   try {
     const safeFilename = path.basename(req.params.filename);
-    const filePath = path.join(process.cwd(), "uploads", safeFilename);
+    const filePath = path.join(getUploadsDir(), safeFilename);
 
     if (fs.existsSync(filePath)) {
       const csvData = fs.readFileSync(filePath, "utf8");
@@ -350,7 +358,7 @@ app.get("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
 app.delete("/api/v1/ledgers/:filename", async (req: Request, res: Response) => {
   try {
     const safeFilename = path.basename(req.params.filename);
-    const filePath = path.join(process.cwd(), "uploads", safeFilename);
+    const filePath = path.join(getUploadsDir(), safeFilename);
 
     let deletedLocal = false;
     if (fs.existsSync(filePath)) {
@@ -451,6 +459,7 @@ app.post("/api/v1/control", async (req: Request, res: Response) => {
 // Configure Vite or serve static files
 async function configureFrontend() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
