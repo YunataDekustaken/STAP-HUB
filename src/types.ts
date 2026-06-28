@@ -8,6 +8,9 @@ export interface User {
   email: string;
   name: string;
   role: Role;
+  avatarUrl?: string;
+  isOnline?: boolean;
+  lastLogin?: string;
 }
 
 export interface FirebaseConnectionConfig {

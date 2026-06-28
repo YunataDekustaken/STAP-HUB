@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Menu, X, ShieldAlert } from "lucide-react";
 import Sidebar, { SidebarTab } from "./components/Sidebar";
 import DashboardTab from "./components/DashboardTab";
@@ -14,6 +14,7 @@ import { Lane, LightState, SystemMode, User } from "./types";
 import { getFirebaseInstances, getFirebaseConfig, handleFirestoreError, OperationType, STAPDatabaseManager } from "./firebase";
 import { collection, addDoc, onSnapshot, doc, setDoc, deleteDoc } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import stapLogo from "../assets/stap-logo.png";
 
 // Initial seed data for Footage Requests
 const INITIAL_FOOTAGE_REQUESTS: FootageRequest[] = [
@@ -109,6 +110,7 @@ export default function App() {
 
   // Firebase auth user
   const [currentUser, setCurrentUser] = useState<{ name: string; email: string; avatarUrl?: string; role?: string } | null>(null);
+  const userUpdatedRef = useRef<string | null>(null);
 
   // Synced Users list (with local sandbox default)
   const [users, setUsers] = useState<User[]>(() => STAPDatabaseManager.getUsers());
@@ -176,9 +178,46 @@ export default function App() {
     await updateSystemSettingsInFirestore({ weatherLocation: loc });
   };
 
-  // Sync Google Auth State
+  // Consolidated logout routine updating active registry status
+  const handleLogout = async () => {
+    const { auth, db } = getFirebaseInstances();
+    if (currentUser) {
+      const emailLower = currentUser.email.toLowerCase();
+      const matchedUser = users.find(u => u.email.toLowerCase() === emailLower);
+      const userDocId = matchedUser?.id || "u-owner";
+
+      if (db) {
+        try {
+          await setDoc(doc(db, "users", userDocId), {
+            isOnline: false
+          }, { merge: true });
+        } catch (err) {
+          console.error("Error setting isOnline: false on logout:", err);
+        }
+      } else {
+        const updated = users.map(u => u.id === userDocId ? { ...u, isOnline: false } : u);
+        setUsers(updated);
+        STAPDatabaseManager.saveUsers(updated);
+      }
+    }
+
+    if (auth) {
+      try {
+        await signOut(auth);
+      } catch (err) {
+        console.error("Logout error:", err);
+      }
+    }
+
+    userUpdatedRef.current = null;
+    setCurrentUser(null);
+    setIsAdmin(false);
+    setActiveTab("DASHBOARD");
+  };
+
+  // Sync Google Auth State & Live Profile Metadata to Database Registry
   useEffect(() => {
-    const { auth } = getFirebaseInstances();
+    const { auth, db } = getFirebaseInstances();
     if (!auth) return;
 
     const unsubAuth = onAuthStateChanged(auth, async (user: any) => {
@@ -186,19 +225,75 @@ export default function App() {
         const userEmail = user.email || "";
         const lowerEmail = userEmail.toLowerCase();
         
-        // Allowed if owner email or exists in the user directory
+        // Check registry matches
         const matchedUser = users.find(u => u.email.toLowerCase() === lowerEmail);
         const allowed = matchedUser || lowerEmail === "stap.est2526@gmail.com";
         
         if (allowed) {
+          const userRole = matchedUser?.role || "Administrator";
+          const userName = matchedUser?.name || user.displayName || "System Owner";
+          const userAvatar = user.photoURL || undefined;
+
           setCurrentUser({
-            name: user.displayName || matchedUser?.name || "STAP Operator",
+            name: userName,
             email: userEmail,
-            avatarUrl: user.photoURL || undefined,
-            role: matchedUser?.role || "Administrator"
+            avatarUrl: userAvatar,
+            role: userRole
           });
           setIsAdmin(true);
           setLoginError("");
+
+          // Prevent redundant database upserts in the same session loop
+          if (userUpdatedRef.current !== user.uid) {
+            userUpdatedRef.current = user.uid;
+            const userDocId = matchedUser?.id || "u-owner";
+            const formattedDate = new Date().toLocaleString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+              hour: "numeric",
+              minute: "numeric",
+              hour12: true
+            });
+
+            if (db) {
+              try {
+                await setDoc(doc(db, "users", userDocId), {
+                  name: userName,
+                  email: userEmail,
+                  role: userRole,
+                  avatarUrl: userAvatar || "",
+                  isOnline: true,
+                  lastLogin: formattedDate
+                }, { merge: true });
+              } catch (err) {
+                console.error("Failed to sync user login details in Firestore:", err);
+              }
+            } else {
+              // Local state sandbox backup
+              let updated = users.map(u => u.id === userDocId ? {
+                ...u,
+                name: userName,
+                avatarUrl: userAvatar,
+                isOnline: true,
+                lastLogin: formattedDate
+              } : u);
+
+              if (userDocId === "u-owner" && !users.some(u => u.id === "u-owner")) {
+                updated = [{
+                  id: "u-owner",
+                  name: userName,
+                  email: userEmail,
+                  role: "Administrator",
+                  avatarUrl: userAvatar,
+                  isOnline: true,
+                  lastLogin: formattedDate
+                }, ...updated];
+              }
+              setUsers(updated);
+              STAPDatabaseManager.saveUsers(updated);
+            }
+          }
         } else {
           setCurrentUser(null);
           setIsAdmin(false);
@@ -216,6 +311,27 @@ export default function App() {
     });
 
     return () => unsubAuth();
+  }, [users]);
+
+  // Reactively sync currentUser details (like role/name changes) with live registry updates
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const matched = users.find(u => u.email.toLowerCase() === currentUser.email.toLowerCase());
+    if (matched) {
+      if (currentUser.role !== matched.role || currentUser.name !== matched.name) {
+        setCurrentUser(prev => prev ? {
+          ...prev,
+          name: matched.name,
+          role: matched.role
+        } : null);
+      }
+    } else {
+      // If their account was removed from the registry, automatically trigger logout
+      if (currentUser.email.toLowerCase() !== "stap.est2526@gmail.com") {
+        handleLogout();
+      }
+    }
   }, [users]);
 
   // Sync Database Snapshots when custom Firebase is bound
@@ -719,14 +835,7 @@ export default function App() {
               <div className="flex gap-1.5 sm:gap-2">
                 <button
                   type="button"
-                  onClick={async () => {
-                    const { auth } = getFirebaseInstances();
-                    if (auth) {
-                      await signOut(auth);
-                    }
-                    setIsAdmin(false);
-                    setActiveTab("DASHBOARD");
-                  }}
+                  onClick={handleLogout}
                   className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[10px] sm:text-xs px-2 sm:px-3.5 py-1.5 rounded-lg transition-all active:scale-95 shadow-xs cursor-pointer"
                 >
                   <span className="hidden sm:inline">← PUBLIC SIDE</span>
@@ -735,14 +844,7 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={async () => {
-                    const { auth } = getFirebaseInstances();
-                    if (auth) {
-                      await signOut(auth);
-                    }
-                    setIsAdmin(false);
-                    setActiveTab("DASHBOARD");
-                  }}
+                  onClick={handleLogout}
                   className="bg-[#0F172A] hover:bg-slate-800 text-white font-bold text-[10px] sm:text-xs px-2.5 sm:px-3.5 py-1.5 rounded-lg transition-all active:scale-95 shadow-xs cursor-pointer"
                 >
                   LOG OUT
@@ -965,7 +1067,14 @@ export default function App() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fadeIn">
           <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl border border-slate-100 p-6 space-y-5 text-left animate-scaleIn">
             <div className="text-center space-y-1.5">
-              <span className="text-3xl">🔑</span>
+              <div className="flex justify-center pb-2">
+                <img 
+                  src={stapLogo} 
+                  alt="STAP Logo" 
+                  className="h-14 w-auto object-contain" 
+                  referrerPolicy="no-referrer"
+                />
+              </div>
               <h3 className="text-base font-bold text-slate-800">STAP Operator Authentication</h3>
               <p className="text-xs text-slate-400 font-semibold">Sign in with your Google Account to manage traffic signals</p>
             </div>

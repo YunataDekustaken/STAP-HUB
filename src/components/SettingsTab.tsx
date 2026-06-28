@@ -614,15 +614,29 @@ export default function SettingsTab({
                       <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xs font-extrabold text-indigo-700 uppercase select-none">
-                              {u.name.slice(0, 2)}
+                            <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xs font-extrabold text-indigo-700 uppercase select-none overflow-hidden shrink-0">
+                              {u.avatarUrl ? (
+                                <img src={u.avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                u.name.slice(0, 2)
+                              )}
                             </div>
                             <div>
-                              <div className="text-xs font-bold text-slate-800">{u.name}</div>
-                              <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
-                                <Mail className="h-3 w-3" />
-                                {u.email}
+                              <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                <span>{u.name}</span>
+                                {u.isOnline && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-xs shadow-emerald-500/80 animate-pulse" title="Active Now" />
+                                )}
                               </div>
+                              <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                                <Mail className="h-3 w-3 shrink-0" />
+                                <span className="truncate max-w-[180px]">{u.email}</span>
+                              </div>
+                              {u.lastLogin && (
+                                <div className="text-[9px] text-slate-400 font-semibold italic mt-0.5">
+                                  Last Login: {u.lastLogin}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </td>
