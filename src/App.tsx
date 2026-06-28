@@ -182,8 +182,8 @@ export default function App() {
   const handleLogout = async () => {
     const { auth, db } = getFirebaseInstances();
     if (currentUser) {
-      const emailLower = currentUser.email.toLowerCase();
-      const matchedUser = users.find(u => u.email.toLowerCase() === emailLower);
+      const emailLower = currentUser.email?.toLowerCase() || "";
+      const matchedUser = users.find(u => u.email?.toLowerCase() === emailLower);
       const userDocId = matchedUser?.id || "u-owner";
 
       if (db) {
@@ -226,7 +226,7 @@ export default function App() {
         const lowerEmail = userEmail.toLowerCase();
         
         // Check registry matches
-        const matchedUser = users.find(u => u.email.toLowerCase() === lowerEmail);
+        const matchedUser = users.find(u => u.email?.toLowerCase() === lowerEmail);
         const allowed = matchedUser || lowerEmail === "stap.est2526@gmail.com";
         
         if (allowed) {
@@ -317,7 +317,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
 
-    const matched = users.find(u => u.email.toLowerCase() === currentUser.email.toLowerCase());
+    const matched = users.find(u => u.email?.toLowerCase() === currentUser.email?.toLowerCase());
     if (matched) {
       if (currentUser.role !== matched.role || currentUser.name !== matched.name) {
         setCurrentUser(prev => prev ? {
