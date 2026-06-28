@@ -36,6 +36,11 @@ export default function DashboardTab({
   weather,
   weatherLocation
  }: DashboardTabProps) {
+  // Local state to track whether the mixed content bypass tutorial/warning banner is visible
+  const [showBypassTutorial, setShowBypassTutorial] = useState<boolean>(() => {
+    return localStorage.getItem("stap_show_tutorial") !== "false";
+  });
+
   // Local state to track image errors on the stream
   const [imageErrors, setImageErrors] = useState<Record<Lane, boolean>>({
     NORTH: false,
@@ -43,8 +48,6 @@ export default function DashboardTab({
     EAST: false,
     WEST: false
   });
-
-  const [showTutorial, setShowTutorial] = useState<boolean>(true);
 
   const pythonStreamUrl = nodeIp && nodeIp.trim() ? `http://${nodeIp.trim()}:5000` : "http://localhost:5000";
 
@@ -131,35 +134,38 @@ export default function DashboardTab({
               <p className="text-[10px] text-slate-400 font-mono mt-0.5">Route: Local Direct IP Controller (${pythonStreamUrl})</p>
             </div>
             
-            <div className="flex items-center gap-2">
-              <div className="bg-cyan-50 px-3 py-1.5 rounded-lg border border-cyan-200/50 shadow-xs flex items-center gap-1.5 select-none text-[9px] font-mono font-black text-cyan-600 uppercase">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-ping" />
-                Direct Stream Active
-              </div>
-
+            <div className="flex items-center gap-2 self-stretch sm:self-auto justify-between sm:justify-end">
               {pythonStreamUrl.startsWith("http:") && window.location.protocol === "https:" && (
                 <button
                   type="button"
-                  id="toggle-tutorial-btn"
-                  onClick={() => setShowTutorial(!showTutorial)}
-                  title={showTutorial ? "Hide Connection Guidelines" : "Show Connection Guidelines"}
-                  className={`flex items-center justify-center w-7 h-7 rounded-full border transition-all duration-200 cursor-pointer ${
-                    showTutorial
-                      ? "bg-amber-100 border-amber-300 text-amber-700 shadow-inner"
-                      : "bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                  onClick={() => {
+                    const nextVal = !showBypassTutorial;
+                    setShowBypassTutorial(nextVal);
+                    localStorage.setItem("stap_show_tutorial", nextVal ? "true" : "false");
+                  }}
+                  className={`p-2 rounded-full border transition-all cursor-pointer flex items-center justify-center ${
+                    showBypassTutorial 
+                      ? "bg-amber-100 border-amber-300 text-amber-700 hover:bg-amber-200" 
+                      : "bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200"
                   }`}
+                  title={showBypassTutorial ? "Hide Stream Instructions" : "Show Stream Instructions"}
                 >
                   <Info className="h-4 w-4" />
                 </button>
               )}
+
+              <div className="bg-cyan-50 px-3 py-1.5 rounded-lg border border-cyan-200/50 shadow-xs flex items-center gap-1.5 select-none text-[9px] font-mono font-black text-cyan-600 uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-ping" />
+                Direct Stream Active
+              </div>
             </div>
           </div>
 
           {/* Mixed Content Security Tutorial Banner - ONLY shown if local HTTP streaming is active on secure HTTPS webapp */}
-          {pythonStreamUrl.startsWith("http:") && window.location.protocol === "https:" && showTutorial && (
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex gap-3 text-amber-900 text-xs relative animate-fadeIn">
-              <ShieldAlert className="h-5 w-5 text-amber-500 shrink-0 mt-0.5 animate-bounce" />
-              <div className="space-y-1.5 text-left pr-8">
+          {pythonStreamUrl.startsWith("http:") && window.location.protocol === "https:" && showBypassTutorial && (
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex gap-3 text-amber-900 text-xs relative">
+              <Info className="h-5 w-5 text-amber-500 shrink-0 mt-0.5 animate-pulse" />
+              <div className="space-y-1.5 text-left pr-8 flex-1">
                 <span className="font-extrabold uppercase tracking-wider block text-[11px] text-amber-700">
                   Camera Stream Blocked? (Mixed HTTPS/HTTP Content Warning)
                 </span>
@@ -175,13 +181,14 @@ export default function DashboardTab({
                   <li>Scroll to <strong>Insecure content</strong> and set it to <strong>"Allow"</strong>, then refresh this page.</li>
                 </ol>
               </div>
-              
               <button
                 type="button"
-                id="close-tutorial-btn"
-                onClick={() => setShowTutorial(false)}
-                className="absolute top-3 right-3 text-amber-600 hover:text-amber-900 p-1 hover:bg-amber-500/20 rounded-lg transition-all cursor-pointer"
-                title="Hide Guidelines"
+                onClick={() => {
+                  setShowBypassTutorial(false);
+                  localStorage.setItem("stap_show_tutorial", "false");
+                }}
+                className="absolute top-3 right-3 text-amber-700 hover:text-amber-950 p-1 rounded-full hover:bg-amber-500/20 transition-all cursor-pointer flex items-center justify-center"
+                aria-label="Close warning banner"
               >
                 <X className="h-4 w-4" />
               </button>

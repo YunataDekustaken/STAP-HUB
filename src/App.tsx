@@ -152,7 +152,7 @@ export default function App() {
     try {
       await setDoc(doc(db, "settings", "system"), updatedFields, { merge: true });
     } catch (e) {
-      console.warn("Notice: Error saving system settings to Firestore:", e);
+      console.error("Error saving system settings to Firestore:", e);
     }
   };
 
@@ -211,8 +211,8 @@ export default function App() {
       }
       setFirebaseSyncError(null);
     }, (error) => {
-      console.warn("Firestore Footage Sync Notice:", error.message || error);
-      setFirebaseSyncError("Could not sync live footage requests. Ensure 'footage_requests' exists and read rules are public in your Firebase Console.");
+      console.error("Firestore Footage Sync Error:", error);
+      setFirebaseSyncError(error.message || String(error));
     });
 
     // 2. Live Sync Incident Reports
@@ -226,8 +226,8 @@ export default function App() {
       }
       setFirebaseSyncError(null);
     }, (error) => {
-      console.warn("Firestore Incident Sync Notice:", error.message || error);
-      setFirebaseSyncError("Could not sync live incident reports. Ensure 'incident_reports' exists and read rules are public in your Firebase Console.");
+      console.error("Firestore Incident Sync Error:", error);
+      setFirebaseSyncError(error.message || String(error));
     });
 
     // 3. Live Sync Announcements
@@ -241,8 +241,8 @@ export default function App() {
       }
       setFirebaseSyncError(null);
     }, (error) => {
-      console.warn("Firestore Announcements Sync Notice:", error.message || error);
-      setFirebaseSyncError("Could not sync live announcements. Ensure 'announcements' exists and read rules are public in your Firebase Console.");
+      console.error("Firestore Announcements Sync Error:", error);
+      setFirebaseSyncError(error.message || String(error));
     });
 
     // 4. Live Sync System Settings
@@ -265,7 +265,7 @@ export default function App() {
         }
       }
     }, (error) => {
-      console.warn("Firestore Settings Sync Notice:", error.message || error);
+      console.error("Firestore Settings Sync Error:", error);
     });
 
     return () => {
@@ -389,7 +389,7 @@ export default function App() {
             }
           }
         } catch (err) {
-          console.warn("STAP Live status sync note:", err);
+          console.error("STAP Live status sync error:", err);
         }
       }
     };
@@ -773,7 +773,7 @@ export default function App() {
                       body: JSON.stringify({ mode: m })
                     });
                   } catch (e) {
-                    console.warn("Cloud control sync note:", e);
+                    console.error("Cloud control sync error:", e);
                   }
 
                   // 2. Dispatch REST command to physical local Python node
@@ -814,7 +814,7 @@ export default function App() {
                       })
                     });
                   } catch (e) {
-                    console.warn("Cloud light sync note:", e);
+                    console.error("Cloud light sync error:", e);
                   }
 
                   // 2. Sync to local physical Python controller
@@ -930,7 +930,7 @@ export default function App() {
                         setShowLoginModal(false);
                         setActiveTab("DASHBOARD");
                       } catch (err: any) {
-                        console.warn("Google auth note:", err);
+                        console.error("Google auth error:", err);
                         setLoginError(err.message || "Failed to authenticate with Google Account.");
                       }
                     }

@@ -20,44 +20,6 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activeTab, onTabChange, isAdmin, onLoginClick }: SidebarProps) {
-  // Logo image resolution with fallback
-  const [logoUrl, setLogoUrl] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    // Check multiple potential paths where user might upload the logo directly
-    const possiblePaths = [
-      "/logo.png",
-      "/src/assets/logo.png",
-      "/assets/logo.png",
-      "/logo.svg",
-      "/logo.jpg",
-      "/logo.jpeg",
-      "/src/logo.png"
-    ];
-
-    let isMounted = true;
-    const testImage = (index: number) => {
-      if (!isMounted || index >= possiblePaths.length) return;
-      
-      const img = new Image();
-      img.onload = () => {
-        if (isMounted) {
-          setLogoUrl(possiblePaths[index]);
-        }
-      };
-      img.onerror = () => {
-        testImage(index + 1);
-      };
-      img.src = possiblePaths[index];
-    };
-
-    testImage(0);
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
   // Navigation tabs for Admin mode
   const adminTabs = [
     {
@@ -127,37 +89,25 @@ export default function Sidebar({ activeTab, onTabChange, isAdmin, onLoginClick 
         {/* Brand/Logo Section matching screenshots */}
         <div className="p-6 pb-2">
           <div className="flex items-center gap-2">
-            {logoUrl ? (
-              <img
-                src={logoUrl}
-                alt="STAP Logo"
-                className="h-16 w-auto object-contain max-w-full"
-                referrerPolicy="no-referrer"
-                onError={() => setLogoUrl(null)}
-              />
-            ) : (
-              /* STAP Logo with custom traffic light letter 'T' */
-              <div className="flex items-center font-black tracking-tight text-3xl font-sans text-white">
-                <span>S</span>
-                {/* Traffic Light graphic inside the letter T */}
-                <span className="relative flex items-center justify-center mx-0.5" style={{ minWidth: "1.4rem" }}>
-                  <span className="font-extrabold text-3xl">T</span>
-                  <span className="absolute -right-1 top-[20%] flex flex-col gap-0.5 bg-black p-0.5 rounded-full border border-slate-700/50 scale-75">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-xs shadow-red-500/80 animate-pulse" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 shadow-xs shadow-yellow-500/80" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-xs shadow-green-500/80" />
-                  </span>
+            {/* STAP Logo with custom traffic light letter 'T' */}
+            <div className="flex items-center font-black tracking-tight text-3xl font-sans text-white">
+              <span>S</span>
+              {/* Traffic Light graphic inside the letter T */}
+              <span className="relative flex items-center justify-center mx-0.5" style={{ minWidth: "1.4rem" }}>
+                <span className="font-extrabold text-3xl">T</span>
+                <span className="absolute -right-1 top-[20%] flex flex-col gap-0.5 bg-black p-0.5 rounded-full border border-slate-700/50 scale-75">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-xs shadow-red-500/80 animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 shadow-xs shadow-yellow-500/80" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-xs shadow-green-500/80" />
                 </span>
-                <span>A</span>
-                <span>P</span>
-              </div>
-            )}
-          </div>
-          {!logoUrl && (
-            <div className="text-[8px] text-slate-200/80 font-bold uppercase tracking-wider mt-1 leading-tight">
-              Smart Traffic Automation Program
+              </span>
+              <span>A</span>
+              <span>P</span>
             </div>
-          )}
+          </div>
+          <div className="text-[8px] text-slate-200/80 font-bold uppercase tracking-wider mt-1 leading-tight">
+            Smart Traffic Automation Program
+          </div>
         </div>
 
         {/* Section Heading - Show only for admin or use a subtle heading */}
