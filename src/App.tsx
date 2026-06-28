@@ -242,6 +242,8 @@ export default function App() {
           });
           setIsAdmin(true);
           setLoginError("");
+          setShowLoginModal(false);
+          setActiveTab("DASHBOARD");
 
           // Prevent redundant database upserts in the same session loop
           if (userUpdatedRef.current !== user.uid) {
@@ -297,11 +299,32 @@ export default function App() {
         } else {
           setCurrentUser(null);
           setIsAdmin(false);
-          if (matchedUser?.role === "Pending") {
+          
+          if (!matchedUser && lowerEmail !== "stap.est2526@gmail.com") {
+            const newUserId = "u-" + Date.now();
+            const displayName = user.displayName || userEmail;
+            const avatarUrl = user.photoURL || undefined;
+            if (db) {
+              try {
+                await setDoc(doc(db, "users", newUserId), {
+                  email: lowerEmail,
+                  name: displayName,
+                  avatarUrl: avatarUrl || "",
+                  role: "Pending",
+                  isOnline: false,
+                  lastLogin: new Date().toISOString()
+                });
+              } catch (e) {
+                 console.error("Failed to create pending user", e);
+              }
+            }
+            setLoginError(`Access Request Submitted: Your account (${userEmail}) is pending approval by an administrator.`);
+          } else if (matchedUser?.role === "Pending") {
             setLoginError(`Access Request Pending: Your account (${userEmail}) is still pending approval by an administrator.`);
           } else {
             setLoginError(`Access Denied: ${userEmail} is not registered in the STAP Operator registry.`);
           }
+          
           try {
             await signOut(auth);
           } catch (err) {
@@ -1121,37 +1144,10 @@ export default function App() {
                     if (auth && provider && db) {
                       try {
                         setLoginError("");
-                        const result = await signInWithPopup(auth, provider);
-                        const userEmail = result.user.email || "";
-                        const lowerEmail = userEmail.toLowerCase();
-                        const displayName = result.user.displayName || userEmail;
-                        const avatarUrl = result.user.photoURL || undefined;
-                        
-                        // Check if email is allowed
-                        const matchedUser = users.find(u => u.email?.toLowerCase() === lowerEmail);
-                        
-                        if (!matchedUser && lowerEmail === "stap.est2526@gmail.com") {
-                          setShowLoginModal(false);
-                          setActiveTab("DASHBOARD");
-                        } else if (!matchedUser) {
-                          const newUserId = "u-" + Date.now();
-                          await setDoc(doc(db, "users", newUserId), {
-                            email: lowerEmail,
-                            name: displayName,
-                            avatarUrl,
-                            role: "Pending",
-                            isOnline: false,
-                            lastLogin: new Date().toISOString()
-                          });
-                          setLoginError(`Access Request Submitted: Your account (${userEmail}) is pending approval by an administrator.`);
-                          await auth.signOut();
-                        } else if (matchedUser.role === "Pending") {
-                          setLoginError(`Access Request Pending: Your account (${userEmail}) is still pending approval by an administrator.`);
-                          await auth.signOut();
-                        } else {
-                          setShowLoginModal(false);
-                          setActiveTab("DASHBOARD");
-                        }
+                        await signInWithPopup(auth, provider);
+                        // All auth flow logic, including checking for permissions and creating
+                        // pending users, is now handled globally in the onAuthStateChanged listener.
+                        // We do not close the modal here; onAuthStateChanged will handle it if successful.
                       } catch (err: any) {
                         console.error("Google auth error:", err);
                         setLoginError(err.message || "Failed to authenticate with Google Account.");
