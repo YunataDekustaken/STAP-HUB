@@ -2,8 +2,8 @@ import express, { Request, Response } from "express";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
-import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
+import { initializeApp, getApps } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
@@ -102,24 +102,22 @@ const CAMERA_ID_TO_LANE: Record<number, "NORTH" | "SOUTH" | "EAST" | "WEST"> = {
 
 const AUTHORIZATION_TOKEN = "node_alpha_J7FVxdRBqwCBWQSdiKBN742lMHuEPX5A";
 
-// Initialize Firebase App & Firestore if credentials are provided in the environment
-const FIREBASE_CONFIG = {
-  apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY,
-  authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID,
-  storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID
-};
+// Initialize Firebase Admin SDK & Firestore if credentials are provided in the environment
+const hasFirebaseApiKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
+const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
 
 let db: any = null;
-if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId) {
+if (hasFirebaseApiKey && firebaseProjectId) {
   try {
-    const app = getApps().length === 0 ? initializeApp(FIREBASE_CONFIG) : getApps()[0];
-    db = getFirestore(app);
-    console.log(`[STAP HUB] Firebase initialized on server for project: ${FIREBASE_CONFIG.projectId}`);
+    if (getApps().length === 0) {
+      initializeApp({
+        projectId: firebaseProjectId,
+      });
+    }
+    db = getFirestore();
+    console.log(`[STAP HUB] Firebase Admin SDK initialized for project: ${firebaseProjectId}`);
   } catch (err) {
-    console.error("[STAP HUB] Failed to initialize Firebase on server:", err);
+    console.error("[STAP HUB] Failed to initialize Firebase Admin SDK:", err);
   }
 } else {
   console.log("[STAP HUB] Firebase server-side sync disabled (credentials missing in environment variables)");
@@ -129,13 +127,13 @@ if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId) {
 async function syncStateToFirestore() {
   if (!db) return;
   try {
-    await withTimeout(
-      setDoc(doc(db, "system", "state"), {
+    await withTimeout<any>(
+      db.collection("system").doc("state").set({
         ...systemState,
         updatedAt: new Date().toISOString()
       }),
       5000,
-      "syncStateToFirestore setDoc"
+      "syncStateToFirestore set"
     );
   } catch (err) {
     console.error("[STAP HUB] Error syncing state to Firestore:", err);
@@ -146,22 +144,25 @@ async function syncStateToFirestore() {
 async function loadStateFromFirestore() {
   if (!db) return;
   try {
-    const snap = await withTimeout(
-      getDoc(doc(db, "system", "state")),
+    const snap = await withTimeout<any>(
+      db.collection("system").doc("state").get(),
       5000,
-      "loadStateFromFirestore getDoc"
+      "loadStateFromFirestore get"
     );
-    if (snap.exists()) {
+    const exists = typeof snap.exists === "function" ? snap.exists() : snap.exists;
+    if (exists) {
       const data = snap.data();
-      systemState = {
-        mode: data.mode || systemState.mode,
-        activeLane: data.activeLane || systemState.activeLane,
-        weather: data.weather || systemState.weather,
-        heartbeatTime: data.heartbeatTime || systemState.heartbeatTime,
-        remainingSecs: data.remainingSecs !== undefined ? data.remainingSecs : systemState.remainingSecs,
-        greenDuration: data.greenDuration !== undefined ? data.greenDuration : systemState.greenDuration,
-        lanes: data.lanes || systemState.lanes
-      };
+      if (data) {
+        systemState = {
+          mode: data.mode || systemState.mode,
+          activeLane: data.activeLane || systemState.activeLane,
+          weather: data.weather || systemState.weather,
+          heartbeatTime: data.heartbeatTime || systemState.heartbeatTime,
+          remainingSecs: data.remainingSecs !== undefined ? data.remainingSecs : systemState.remainingSecs,
+          greenDuration: data.greenDuration !== undefined ? data.greenDuration : systemState.greenDuration,
+          lanes: data.lanes || systemState.lanes
+        };
+      }
     }
   } catch (err) {
     console.error("[STAP HUB] Error loading state from Firestore:", err);
@@ -300,8 +301,8 @@ app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Respons
     let savedToCloud = false;
     if (db) {
       try {
-        await withTimeout(
-          setDoc(doc(db, "ledgers", safeDocId), {
+        await withTimeout<any>(
+          db.collection("ledgers").doc(safeDocId).set({
             filename: safeFilename,
             size: Buffer.byteLength(csvData, "utf8"),
             uploadedAt: new Date().toISOString(),
@@ -309,7 +310,7 @@ app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Respons
             syncedAt: new Date().toISOString()
           }),
           5000,
-          "upload-ledger Firestore setDoc"
+          "upload-ledger Firestore set"
         );
         savedToCloud = true;
         console.log(`[STAP HUB] Ledger saved to Firestore Cloud successfully: ${safeFilename}`);
@@ -368,11 +369,10 @@ app.get("/api/v1/ledgers", asyncHandler(async (req: Request, res: Response) => {
     // 2. Load Firestore logs if configured
     if (db) {
       try {
-        const { getDocs, collection } = await import("firebase/firestore");
-        const querySnapshot = await withTimeout(
-          getDocs(collection(db, "ledgers")),
+        const querySnapshot = await withTimeout<any>(
+          db.collection("ledgers").get(),
           5000,
-          "list ledgers getDocs"
+          "list ledgers get"
         );
         querySnapshot.forEach((docSnap: any) => {
           const data = docSnap.data();
@@ -414,16 +414,18 @@ app.get("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Resp
     // Fallback to Firestore Cloud
     if (db) {
       try {
-        const { getDoc, doc } = await import("firebase/firestore");
         const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
-        const docSnap = await withTimeout(
-          getDoc(doc(db, "ledgers", safeDocId)),
+        const docSnap = await withTimeout<any>(
+          db.collection("ledgers").doc(safeDocId).get(),
           5000,
-          "get ledger getDoc"
+          "get ledger get"
         );
-        if (docSnap.exists()) {
+        const exists = typeof docSnap.exists === "function" ? docSnap.exists() : docSnap.exists;
+        if (exists) {
           const data = docSnap.data();
-          return res.json({ success: true, filename: safeFilename, csvData: data.csvData });
+          if (data) {
+            return res.json({ success: true, filename: safeFilename, csvData: data.csvData });
+          }
         }
       } catch (dbErr) {
         console.error("[STAP HUB] Failed to retrieve ledger from Firestore:", dbErr);
@@ -452,12 +454,11 @@ app.delete("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: R
     let deletedCloud = false;
     if (db) {
       try {
-        const { deleteDoc, doc } = await import("firebase/firestore");
         const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
-        await withTimeout(
-          deleteDoc(doc(db, "ledgers", safeDocId)),
+        await withTimeout<any>(
+          db.collection("ledgers").doc(safeDocId).delete(),
           5000,
-          "delete ledger deleteDoc"
+          "delete ledger delete"
         );
         deletedCloud = true;
       } catch (dbErr) {
