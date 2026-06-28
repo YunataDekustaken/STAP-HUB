@@ -277,17 +277,23 @@ app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Respons
   const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
 
   try {
-    // 1. Save locally as fallback (works on writeable fs, including Vercel's /tmp/uploads)
+    const isVercel = !!process.env.VERCEL;
     let savedLocally = false;
-    try {
-      const uploadsDir = getUploadsDir();
-      const filePath = path.join(uploadsDir, safeFilename);
 
-      fs.writeFileSync(filePath, csvData, "utf8");
-      savedLocally = true;
-      console.log(`[STAP HUB] Ledger saved locally: ${safeFilename}`);
-    } catch (fsErr) {
-      console.warn("[STAP HUB] Local write bypassed:", fsErr);
+    // 1. Save locally as fallback if NOT running on Vercel
+    if (!isVercel) {
+      try {
+        const uploadsDir = getUploadsDir();
+        const filePath = path.join(uploadsDir, safeFilename);
+
+        fs.writeFileSync(filePath, csvData, "utf8");
+        savedLocally = true;
+        console.log(`[STAP HUB] Ledger saved locally: ${safeFilename}`);
+      } catch (fsErr) {
+        console.warn("[STAP HUB] Local write bypassed:", fsErr);
+      }
+    } else {
+      console.log(`[STAP HUB] Running on Vercel. Bypassing local filesystem write for ${safeFilename}.`);
     }
 
     // 2. Upload directly to Firestore Cloud Database if connected (best-effort, max 5s timeout)
@@ -321,7 +327,11 @@ app.post("/api/v1/upload-ledger", asyncHandler(async (req: Request, res: Respons
       });
     }
 
-    throw new Error("Local filesystem is write-protected and Firebase Cloud is not configured.");
+    throw new Error(
+      isVercel
+        ? "Firebase Cloud is not configured or failed to save on Vercel environment."
+        : "Local filesystem is write-protected and Firebase Cloud is not configured."
+    );
   } catch (err: any) {
     console.error("[STAP HUB] Failed to save ledger upload:", err);
     return res.status(500).json({ success: false, error: err.message || "Failed to save file on server." });
