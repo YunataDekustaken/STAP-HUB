@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Menu, X, ShieldAlert, Clock, UserX } from "lucide-react";
+import { Menu, X, ShieldAlert } from "lucide-react";
 import Sidebar, { SidebarTab } from "./components/Sidebar";
 import DashboardTab from "./components/DashboardTab";
 import ControlTab from "./components/ControlTab";
@@ -225,12 +225,12 @@ export default function App() {
         const userEmail = user.email || "";
         const lowerEmail = userEmail.toLowerCase();
         
-          // Check registry matches
+        // Check registry matches
         const matchedUser = users.find(u => u.email.toLowerCase() === lowerEmail);
+        const allowed = matchedUser || lowerEmail === "stap.est2526@gmail.com";
         
-        // Always allow the owner
-        if (lowerEmail === "stap.est2526@gmail.com") {
-          const userRole = "Administrator";
+        if (allowed) {
+          const userRole = matchedUser?.role || "Administrator";
           const userName = matchedUser?.name || user.displayName || "System Owner";
           const userAvatar = user.photoURL || undefined;
 
@@ -238,8 +238,7 @@ export default function App() {
             name: userName,
             email: userEmail,
             avatarUrl: userAvatar,
-            role: userRole,
-            status: "approved"
+            role: userRole
           });
           setIsAdmin(true);
           setLoginError("");
@@ -263,7 +262,6 @@ export default function App() {
                   name: userName,
                   email: userEmail,
                   role: userRole,
-                  status: "approved",
                   avatarUrl: userAvatar || "",
                   isOnline: true,
                   lastLogin: formattedDate
@@ -271,96 +269,39 @@ export default function App() {
               } catch (err) {
                 console.error("Failed to sync user login details in Firestore:", err);
               }
-            }
-          }
-        } else if (matchedUser) {
-          // User exists in registry, check status
-          if (matchedUser.status === "approved") {
-            const userRole = matchedUser.role;
-            const userName = matchedUser.name || user.displayName || "STAP Operator";
-            const userAvatar = user.photoURL || undefined;
+            } else {
+              // Local state sandbox backup
+              let updated = users.map(u => u.id === userDocId ? {
+                ...u,
+                name: userName,
+                avatarUrl: userAvatar,
+                isOnline: true,
+                lastLogin: formattedDate
+              } : u);
 
-            setCurrentUser({
-              name: userName,
-              email: userEmail,
-              avatarUrl: userAvatar,
-              role: userRole,
-              status: "approved"
-            });
-            setIsAdmin(true);
-            setLoginError("");
-
-            if (userUpdatedRef.current !== user.uid) {
-              userUpdatedRef.current = user.uid;
-              const formattedDate = new Date().toLocaleString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-                hour: "numeric",
-                minute: "numeric",
-                hour12: true
-              });
-
-              if (db) {
-                try {
-                  await setDoc(doc(db, "users", matchedUser.id), {
-                    isOnline: true,
-                    lastLogin: formattedDate,
-                    avatarUrl: userAvatar || matchedUser.avatarUrl || ""
-                  }, { merge: true });
-                } catch (err) {
-                  console.error("Failed to sync login status:", err);
-                }
+              if (userDocId === "u-owner" && !users.some(u => u.id === "u-owner")) {
+                updated = [{
+                  id: "u-owner",
+                  name: userName,
+                  email: userEmail,
+                  role: "Administrator",
+                  avatarUrl: userAvatar,
+                  isOnline: true,
+                  lastLogin: formattedDate
+                }, ...updated];
               }
+              setUsers(updated);
+              STAPDatabaseManager.saveUsers(updated);
             }
-          } else if (matchedUser.status === "pending") {
-            setCurrentUser({
-              name: matchedUser.name,
-              email: userEmail,
-              role: matchedUser.role,
-              status: "pending"
-            });
-            setIsAdmin(false);
-          } else {
-            // Denied
-            setCurrentUser({
-              name: matchedUser.name,
-              email: userEmail,
-              role: matchedUser.role,
-              status: "denied"
-            });
-            setIsAdmin(false);
-            setLoginError(`Access Denied: Your account has been restricted by an administrator.`);
           }
         } else {
-          // New user sign in - Register as pending
-          const userName = user.displayName || "New User";
-          const userAvatar = user.photoURL || undefined;
-          
-          setCurrentUser({
-            name: userName,
-            email: userEmail,
-            avatarUrl: userAvatar,
-            role: "Operations Analyst",
-            status: "pending"
-          });
+          setCurrentUser(null);
           setIsAdmin(false);
-
-          if (db && userUpdatedRef.current !== user.uid) {
-            userUpdatedRef.current = user.uid;
-            try {
-              const newId = `u-${Math.random().toString(36).substring(2, 9)}`;
-              await setDoc(doc(db, "users", newId), {
-                name: userName,
-                email: userEmail,
-                role: "Operations Analyst",
-                status: "pending",
-                avatarUrl: userAvatar || "",
-                lastLogin: new Date().toLocaleString()
-              });
-            } catch (err) {
-              console.error("Failed to register new access request:", err);
-            }
+          setLoginError(`Access Denied: ${userEmail} is not registered in the STAP Operator registry.`);
+          try {
+            await signOut(auth);
+          } catch (err) {
+            console.error("SignOut error:", err);
           }
         }
       } else {
@@ -482,8 +423,7 @@ export default function App() {
             await setDoc(doc(db, "users", u.id), {
               name: u.name,
               email: u.email,
-              role: u.role,
-              status: u.status || "approved"
+              role: u.role
             });
           } catch (seedErr) {
             console.error("Failed to seed user in Firestore:", seedErr);
@@ -795,91 +735,7 @@ export default function App() {
   };
 
   return (
-    <>
-      {/* Pending Access Request View */}
-      {currentUser && currentUser.status === "pending" && (
-        <div className="fixed inset-0 z-[100] bg-[#EBF0F6] flex items-center justify-center p-4 font-sans">
-          <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 p-8 md:p-12 max-w-lg w-full text-center space-y-8 animate-scaleIn">
-            <div className="space-y-4">
-              <div className="mx-auto w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 shadow-inner">
-                <Clock className="h-10 w-10 animate-pulse" />
-              </div>
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Access Request Pending</h2>
-              <p className="text-sm text-slate-500 font-medium leading-relaxed">
-                Hello <span className="text-slate-800 font-bold">{currentUser.name}</span>, your request to access the STAP Operator Panel has been sent to the system administrators for verification.
-              </p>
-            </div>
-            
-            <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 text-left space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-[#4E6290] flex items-center justify-center text-white text-sm font-black uppercase">
-                  {currentUser.name.slice(0, 2)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-black text-slate-800 truncate">{currentUser.name}</p>
-                  <p className="text-[10px] text-slate-400 font-mono truncate">{currentUser.email}</p>
-                </div>
-                <span className="bg-amber-100 text-amber-700 text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter">
-                  Pending
-                </span>
-              </div>
-              <div className="pt-3 border-t border-slate-200/60 flex items-start gap-2.5">
-                <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                <p className="text-[10px] text-slate-400 leading-normal font-medium">
-                  Our security protocol requires manual approval for all new operator accounts. You will be able to access the system once an administrator verifies your credentials.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3">
-               <button
-                onClick={() => window.location.reload()}
-                className="bg-[#0F172A] hover:bg-slate-800 text-white font-black text-xs py-3.5 rounded-2xl transition-all active:scale-95 shadow-lg shadow-slate-200 uppercase tracking-widest"
-              >
-                Check Request Status
-              </button>
-              <button
-                onClick={handleLogout}
-                className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-400 hover:text-slate-600 font-bold text-xs py-3 rounded-2xl transition-all active:scale-95 uppercase"
-              >
-                Sign Out & Exit
-              </button>
-            </div>
-            
-            <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">
-              STAP Smart Traffic Automation Program
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Denied Access View */}
-      {currentUser && currentUser.status === "denied" && (
-        <div className="fixed inset-0 z-[100] bg-[#EBF0F6] flex items-center justify-center p-4 font-sans">
-          <div className="bg-white rounded-[2rem] shadow-2xl border border-rose-100 p-8 md:p-12 max-w-lg w-full text-center space-y-8 animate-scaleIn">
-            <div className="space-y-4">
-              <div className="mx-auto w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 shadow-inner">
-                <UserX className="h-10 w-10" />
-              </div>
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Access Restricted</h2>
-              <p className="text-sm text-slate-500 font-medium leading-relaxed">
-                Your account (<span className="text-slate-800 font-bold">{currentUser.email}</span>) has been denied access to the STAP system by an administrator.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={handleLogout}
-                className="bg-[#0F172A] hover:bg-slate-800 text-white font-black text-xs py-3.5 rounded-2xl transition-all active:scale-95 shadow-lg shadow-slate-200 uppercase tracking-widest"
-              >
-                Return to Public Portal
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="flex h-screen w-screen bg-[#EBF0F6] text-slate-800 overflow-hidden font-sans">
+    <div className="flex h-screen w-screen bg-[#EBF0F6] text-slate-800 overflow-hidden font-sans">
       
       {/* 1. Sidebar Panel on Left (with Mobile Slide-out Drawer) */}
       {isMobileMenuOpen && (
@@ -1232,8 +1088,20 @@ export default function App() {
                     if (auth && provider) {
                       try {
                         setLoginError("");
-                        await signInWithPopup(auth, provider);
-                        setShowLoginModal(false);
+                        const result = await signInWithPopup(auth, provider);
+                        const userEmail = result.user.email || "";
+                        const lowerEmail = userEmail.toLowerCase();
+                        
+                        // Check if email is allowed
+                        const matchedUser = users.find(u => u.email.toLowerCase() === lowerEmail);
+                        const allowed = matchedUser || lowerEmail === "stap.est2526@gmail.com";
+                        
+                        if (allowed) {
+                          setShowLoginModal(false);
+                          setActiveTab("DASHBOARD");
+                        } else {
+                          setLoginError(`Access Denied: ${userEmail} is not registered in the STAP Operator registry.`);
+                        }
                       } catch (err: any) {
                         console.error("Google auth error:", err);
                         setLoginError(err.message || "Failed to authenticate with Google Account.");
@@ -1299,7 +1167,6 @@ export default function App() {
         />
       )}
 
-      </div>
-    </>
+    </div>
   );
 }

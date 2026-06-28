@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Lane, LightState, User, Role, UserStatus } from "../types";
-import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X, UserCheck, UserX, Clock } from "lucide-react";
+import { Lane, LightState, User, Role } from "../types";
+import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X } from "lucide-react";
 import { getFirebaseConfig, saveFirebaseConfig, getFirebaseInstances, handleFirestoreError, OperationType, STAPDatabaseManager } from "../firebase";
 import { collection, onSnapshot, doc, addDoc, setDoc, deleteDoc } from "firebase/firestore";
 
@@ -74,8 +74,7 @@ export default function SettingsTab({
         await addDoc(collection(db, "users"), {
           name: newUserName.trim(),
           email: newUserEmail.trim(),
-          role: newUserRole,
-          status: "approved"
+          role: newUserRole
         });
         setUserActionSuccess(`Successfully registered user "${newUserName}" in Firestore!`);
         setShowAddUserModal(false);
@@ -92,8 +91,7 @@ export default function SettingsTab({
         id: `u-${Math.random().toString(36).substring(2, 9)}`,
         name: newUserName.trim(),
         email: newUserEmail.trim(),
-        role: newUserRole,
-        status: "approved"
+        role: newUserRole
       };
       const updated = [newUser, ...users];
       setUsers(updated);
@@ -151,28 +149,6 @@ export default function SettingsTab({
       setUsers(updated);
       STAPDatabaseManager.saveUsers(updated);
       setUserActionSuccess("User role assignment updated successfully!");
-    }
-  };
-
-  const handleUpdateStatus = async (userId: string, nextStatus: UserStatus) => {
-    setUserActionError(null);
-    setUserActionSuccess(null);
-
-    const { db } = getFirebaseInstances();
-    if (db && firebaseConnected) {
-      try {
-        await setDoc(doc(db, "users", userId), { status: nextStatus }, { merge: true });
-        setUserActionSuccess(`User status successfully updated to ${nextStatus}!`);
-      } catch (err: any) {
-        console.error("Error updating user status in Firestore:", err);
-        setUserActionError(err.message || "Failed to update user status in Firestore.");
-      }
-    } else {
-      // Local fallback
-      const updated = users.map((u) => (u.id === userId ? { ...u, status: nextStatus } : u));
-      setUsers(updated);
-      STAPDatabaseManager.saveUsers(updated);
-      setUserActionSuccess(`User status updated to ${nextStatus}!`);
     }
   };
 
@@ -334,13 +310,10 @@ export default function SettingsTab({
           }`}
         >
           <Users className="h-4 w-4" />
-          User Management & Requests
+          User Management
           <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full font-bold font-mono">
             {users.length}
           </span>
-          {users.some(u => u.status === "pending") && (
-            <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-          )}
         </button>
       </div>
 
@@ -572,62 +545,6 @@ export default function SettingsTab({
 
       {activeSubTab === "users" && (
         <div className="space-y-6 animate-fadeIn">
-          
-          {/* Access Requests Queue */}
-          {users.some(u => u.status === "pending") && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl overflow-hidden shadow-sm animate-pulse-subtle">
-              <div className="px-6 py-3.5 bg-amber-100/50 border-b border-amber-200 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-amber-700" />
-                  <h3 className="text-sm font-black text-amber-900 uppercase tracking-tight">Access Requests Queue</h3>
-                </div>
-                <span className="bg-amber-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
-                  {users.filter(u => u.status === "pending").length} Awaiting Verification
-                </span>
-              </div>
-              <div className="divide-y divide-amber-100">
-                {users.filter(u => u.status === "pending").map((u) => (
-                  <div key={u.id} className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-white border border-amber-200 flex items-center justify-center text-xs font-black text-amber-700 uppercase overflow-hidden shrink-0 shadow-sm">
-                        {u.avatarUrl ? (
-                          <img src={u.avatarUrl} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          u.name.slice(0, 2)
-                        )}
-                      </div>
-                      <div>
-                        <div className="text-xs font-black text-slate-800">{u.name}</div>
-                        <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
-                          <Mail className="h-3 w-3 shrink-0" />
-                          <span>{u.email}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateStatus(u.id, "approved")}
-                        className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm uppercase"
-                      >
-                        <UserCheck className="h-3 w-3" />
-                        Approve Access
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateStatus(u.id, "denied")}
-                        className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-black text-[10px] px-3 py-1.5 rounded-lg border border-rose-200 transition-all active:scale-95 shadow-sm uppercase"
-                      >
-                        <UserX className="h-3 w-3" />
-                        Deny
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Header & Alert */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -688,7 +605,6 @@ export default function SettingsTab({
                     <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
                       <th className="px-5 py-3.5">User Profile</th>
                       <th className="px-5 py-3.5">System Role Assignment</th>
-                      <th className="px-5 py-3.5">Access Status</th>
                       <th className="px-5 py-3.5">Database Pipe</th>
                       <th className="px-5 py-3.5 text-right">Actions</th>
                     </tr>
@@ -735,25 +651,6 @@ export default function SettingsTab({
                               <option value="Traffic Commissioner">Traffic Commissioner (Operator)</option>
                               <option value="Inspector">Inspector (Operator)</option>
                               <option value="Operations Analyst">Operations Analyst (Viewer)</option>
-                            </select>
-                          </div>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={u.status || "approved"}
-                              onChange={(e) => handleUpdateStatus(u.id, e.target.value as UserStatus)}
-                              className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border outline-none cursor-pointer transition-all ${
-                                u.status === "approved" || !u.status
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  : u.status === "pending"
-                                  ? "bg-amber-50 text-amber-700 border-amber-200"
-                                  : "bg-rose-50 text-rose-700 border-rose-200"
-                              }`}
-                            >
-                              <option value="approved">Approved</option>
-                              <option value="pending">Pending</option>
-                              <option value="denied">Denied</option>
                             </select>
                           </div>
                         </td>
