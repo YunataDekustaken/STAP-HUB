@@ -17,6 +17,8 @@ import {
   X
 } from "lucide-react";
 
+import PublicAnalytics from "./PublicAnalytics";
+
 interface DashboardTabProps {
   isNodeConnected: boolean;
   lanes: Record<Lane, { count: number; density: number; light: LightState; los: string }>;
@@ -425,6 +427,11 @@ export default function DashboardTab({
           </div>
 
         </div>
+      </div>
+
+      {/* Public Analytics Section (Synced from Firebase) */}
+      <div className="pt-2">
+        <PublicAnalytics />
       </div>
     </div>
   );
