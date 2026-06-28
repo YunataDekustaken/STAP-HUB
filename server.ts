@@ -7,6 +7,14 @@ import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 
 dotenv.config();
 
+// Global crash protection for unhandled exceptions & promise rejections
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[STAP HUB] Unhandled Promise Rejection at:", promise, "reason:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[STAP HUB] Uncaught Exception occurred:", error);
+});
+
 // Helper to resolve the correct uploads folder. On Vercel, we must write to /tmp.
 function getUploadsDir(): string {
   const isVercel = !!process.env.VERCEL;
@@ -217,12 +225,16 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: "Missing filename or valid csvData string in request body." });
   }
 
+  // Normalize path separators (convert all Windows \ to Linux /)
+  const normalizedFilename = filename.replace(/\\/g, "/");
+  const safeFilename = path.basename(normalizedFilename);
+  const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
+
   try {
     // 1. Save locally as fallback (works on writeable fs, including Vercel's /tmp/uploads)
     let savedLocally = false;
     try {
       const uploadsDir = getUploadsDir();
-      const safeFilename = path.basename(filename);
       const filePath = path.join(uploadsDir, safeFilename);
 
       fs.writeFileSync(filePath, csvData, "utf8");
@@ -235,22 +247,25 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
     // 2. Upload directly to Firestore Cloud Database if connected
     let savedToCloud = false;
     if (db) {
-      const safeDocId = filename.replace(/[.#$/[\]]/g, "_");
-      await setDoc(doc(db, "ledgers", safeDocId), {
-        filename: filename,
-        size: Buffer.byteLength(csvData, "utf8"),
-        uploadedAt: new Date().toISOString(),
-        csvData: csvData,
-        syncedAt: new Date().toISOString()
-      });
-      savedToCloud = true;
-      console.log(`[STAP HUB] Ledger saved to Firestore Cloud successfully: ${filename}`);
+      try {
+        await setDoc(doc(db, "ledgers", safeDocId), {
+          filename: safeFilename,
+          size: Buffer.byteLength(csvData, "utf8"),
+          uploadedAt: new Date().toISOString(),
+          csvData: csvData,
+          syncedAt: new Date().toISOString()
+        });
+        savedToCloud = true;
+        console.log(`[STAP HUB] Ledger saved to Firestore Cloud successfully: ${safeFilename}`);
+      } catch (cloudErr) {
+        console.error("[STAP HUB] Firestore upload failed:", cloudErr);
+      }
     }
 
     if (savedLocally || savedToCloud) {
       return res.json({
         success: true,
-        message: `Ledger ${filename} uploaded and processed successfully.`,
+        message: `Ledger ${safeFilename} uploaded and processed successfully.`,
         savedLocally,
         savedToCloud
       });
