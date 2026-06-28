@@ -15,6 +15,8 @@ interface SettingsTabProps {
   isAdmin: boolean;
   weatherLocation: string;
   onUpdateWeatherLocation: (location: string) => void;
+  users: User[];
+  setUsers: React.Dispatch<React.SetStateAction<User[]>>;
 }
 
 export default function SettingsTab({
@@ -27,7 +29,9 @@ export default function SettingsTab({
   setWeather,
   isAdmin,
   weatherLocation,
-  onUpdateWeatherLocation
+  onUpdateWeatherLocation,
+  users,
+  setUsers
 }: SettingsTabProps) {
   const [inputValue, setInputValue] = useState(nodeIp || "192.168.1.100");
   const [isConnecting, setIsConnecting] = useState(false);
@@ -38,8 +42,7 @@ export default function SettingsTab({
   const [activeSubTab, setActiveSubTab] = useState<"general" | "users">("general");
 
   // User Management state
-  const [users, setUsers] = useState<User[]>([]);
-  const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(true);
+  const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(false);
   const [showAddUserModal, setShowAddUserModal] = useState<boolean>(false);
   const [newUserName, setNewUserName] = useState<string>("");
   const [newUserEmail, setNewUserEmail] = useState<string>("");
@@ -55,53 +58,6 @@ export default function SettingsTab({
     const config = getFirebaseConfig();
     setFirebaseConnected(config.connected);
   }, []);
-
-  // Synchronize users on load or when firebaseConnected state changes
-  useEffect(() => {
-    let unsub: (() => void) | undefined;
-    
-    const initUsers = async () => {
-      setIsLoadingUsers(true);
-      setUserActionError(null);
-      
-      const { db } = getFirebaseInstances();
-      if (db && firebaseConnected) {
-        try {
-          unsub = onSnapshot(collection(db, "users"), (snapshot) => {
-            const list: User[] = [];
-            snapshot.forEach((d) => {
-              list.push({ id: d.id, ...d.data() } as User);
-            });
-            setUsers(list);
-            setIsLoadingUsers(false);
-          }, (error) => {
-            console.error("Firestore Users subscription error:", error);
-            // Fallback to local on error or permissions block, but notify
-            const localUsers = STAPDatabaseManager.getUsers();
-            setUsers(localUsers);
-            setUserActionError("Firestore 'users' Sync Error: Missing or insufficient permissions. Displaying offline/cached fallback users.");
-            setIsLoadingUsers(false);
-          });
-        } catch (err: any) {
-          console.error("Firestore initial setup error:", err);
-          const localUsers = STAPDatabaseManager.getUsers();
-          setUsers(localUsers);
-          setIsLoadingUsers(false);
-        }
-      } else {
-        // Fallback to local sandbox storage
-        const localUsers = STAPDatabaseManager.getUsers();
-        setUsers(localUsers);
-        setIsLoadingUsers(false);
-      }
-    };
-
-    initUsers();
-    
-    return () => {
-      if (unsub) unsub();
-    };
-  }, [firebaseConnected]);
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();

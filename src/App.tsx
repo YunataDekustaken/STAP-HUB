@@ -10,8 +10,8 @@ import AnalyticsTab from "./components/AnalyticsTab";
 import PublicDataRequest from "./components/PublicDataRequest";
 import PublicIncidentReport from "./components/PublicIncidentReport";
 import SettingsTab from "./components/SettingsTab";
-import { Lane, LightState, SystemMode } from "./types";
-import { getFirebaseInstances, getFirebaseConfig, handleFirestoreError, OperationType } from "./firebase";
+import { Lane, LightState, SystemMode, User } from "./types";
+import { getFirebaseInstances, getFirebaseConfig, handleFirestoreError, OperationType, STAPDatabaseManager } from "./firebase";
 import { collection, addDoc, onSnapshot, doc, setDoc, deleteDoc } from "firebase/firestore";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 
@@ -108,7 +108,10 @@ export default function App() {
   const [loginError, setLoginError] = useState<string>("");
 
   // Firebase auth user
-  const [currentUser, setCurrentUser] = useState<{ name: string; email: string; avatarUrl?: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ name: string; email: string; avatarUrl?: string; role?: string } | null>(null);
+
+  // Synced Users list (with local sandbox default)
+  const [users, setUsers] = useState<User[]>(() => STAPDatabaseManager.getUsers());
 
   // Firestore sync error handler state
   const [firebaseSyncError, setFirebaseSyncError] = useState<string | null>(null);
@@ -178,14 +181,34 @@ export default function App() {
     const { auth } = getFirebaseInstances();
     if (!auth) return;
 
-    const unsubAuth = onAuthStateChanged(auth, (user: any) => {
+    const unsubAuth = onAuthStateChanged(auth, async (user: any) => {
       if (user) {
-        setCurrentUser({
-          name: user.displayName || "STAP Operator",
-          email: user.email || "",
-          avatarUrl: user.photoURL || undefined
-        });
-        setIsAdmin(true);
+        const userEmail = user.email || "";
+        const lowerEmail = userEmail.toLowerCase();
+        
+        // Allowed if owner email or exists in the user directory
+        const matchedUser = users.find(u => u.email.toLowerCase() === lowerEmail);
+        const allowed = matchedUser || lowerEmail === "stap.est2526@gmail.com";
+        
+        if (allowed) {
+          setCurrentUser({
+            name: user.displayName || matchedUser?.name || "STAP Operator",
+            email: userEmail,
+            avatarUrl: user.photoURL || undefined,
+            role: matchedUser?.role || "Administrator"
+          });
+          setIsAdmin(true);
+          setLoginError("");
+        } else {
+          setCurrentUser(null);
+          setIsAdmin(false);
+          setLoginError(`Access Denied: ${userEmail} is not registered in the STAP Operator registry.`);
+          try {
+            await signOut(auth);
+          } catch (err) {
+            console.error("SignOut error:", err);
+          }
+        }
       } else {
         setCurrentUser(null);
         setIsAdmin(false);
@@ -193,7 +216,7 @@ export default function App() {
     });
 
     return () => unsubAuth();
-  }, []);
+  }, [users]);
 
   // Sync Database Snapshots when custom Firebase is bound
   useEffect(() => {
@@ -268,11 +291,39 @@ export default function App() {
       console.error("Firestore Settings Sync Error:", error);
     });
 
+    // 5. Live Sync Users with Firestore/Local Seeding fallback
+    const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
+      const list: User[] = [];
+      snapshot.forEach((d) => {
+        list.push({ id: d.id, ...d.data() } as User);
+      });
+      if (list.length > 0) {
+        setUsers(list);
+      } else {
+        // Seeding the empty collection in Firestore
+        const initialUsers = STAPDatabaseManager.getUsers();
+        initialUsers.forEach(async (u) => {
+          try {
+            await setDoc(doc(db, "users", u.id), {
+              name: u.name,
+              email: u.email,
+              role: u.role
+            });
+          } catch (seedErr) {
+            console.error("Failed to seed user in Firestore:", seedErr);
+          }
+        });
+      }
+    }, (error) => {
+      console.error("Firestore Users Sync Error:", error);
+    });
+
     return () => {
       unsubFootage();
       unsubIncidents();
       unsubAnnouncements();
       unsubSettings();
+      unsubUsers();
     };
   }, []);
 
@@ -900,6 +951,8 @@ export default function App() {
                 isAdmin={isAdmin}
                 weatherLocation={weatherLocation}
                 onUpdateWeatherLocation={handleUpdateWeatherLocation}
+                users={users}
+                setUsers={setUsers}
               />
             )}
 
@@ -910,15 +963,15 @@ export default function App() {
       {/* 4. Administrator Authentication Modal */}
       {showLoginModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl border border-slate-100 p-6 space-y-5 text-left">
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl border border-slate-100 p-6 space-y-5 text-left animate-scaleIn">
             <div className="text-center space-y-1.5">
               <span className="text-3xl">🔑</span>
               <h3 className="text-base font-bold text-slate-800">STAP Operator Authentication</h3>
-              <p className="text-xs text-slate-400 font-semibold">Enter your secure credentials to manage traffic signals</p>
+              <p className="text-xs text-slate-400 font-semibold">Sign in with your Google Account to manage traffic signals</p>
             </div>
 
-            {getFirebaseConfig().connected && (
-              <div className="space-y-4">
+            <div className="space-y-4">
+              {getFirebaseConfig().connected ? (
                 <button
                   type="button"
                   onClick={async () => {
@@ -926,9 +979,20 @@ export default function App() {
                     if (auth && provider) {
                       try {
                         setLoginError("");
-                        await signInWithPopup(auth, provider);
-                        setShowLoginModal(false);
-                        setActiveTab("DASHBOARD");
+                        const result = await signInWithPopup(auth, provider);
+                        const userEmail = result.user.email || "";
+                        const lowerEmail = userEmail.toLowerCase();
+                        
+                        // Check if email is allowed
+                        const matchedUser = users.find(u => u.email.toLowerCase() === lowerEmail);
+                        const allowed = matchedUser || lowerEmail === "stap.est2526@gmail.com";
+                        
+                        if (allowed) {
+                          setShowLoginModal(false);
+                          setActiveTab("DASHBOARD");
+                        } else {
+                          setLoginError(`Access Denied: ${userEmail} is not registered in the STAP Operator registry.`);
+                        }
                       } catch (err: any) {
                         console.error("Google auth error:", err);
                         setLoginError(err.message || "Failed to authenticate with Google Account.");
@@ -957,63 +1021,26 @@ export default function App() {
                   </svg>
                   <span className="text-xs">Sign in with Google Account</span>
                 </button>
-
-                <div className="relative flex py-2 items-center">
-                  <div className="flex-grow border-t border-slate-150"></div>
-                  <span className="flex-shrink mx-4 text-[10px] text-slate-400 font-extrabold uppercase tracking-widest">or bypass offline</span>
-                  <div className="flex-grow border-t border-slate-150"></div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-amber-800 text-xs leading-relaxed font-semibold">
+                  ⚠️ Firebase Connection Offline: Google Authentication is not configured. Please define your Firebase environment variables (e.g., VITE_FIREBASE_API_KEY) in your environment settings or hardcode them in 'src/firebase.ts' to enable secure sign-in.
                 </div>
-              </div>
-            )}
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!loginPassword.trim()) {
-                  setLoginError("Please enter your administrator password.");
-                  return;
-                }
-                // Accept 'admin' or any password for seamless preview testing
-                setIsAdmin(true);
-                setActiveTab("DASHBOARD");
-                setShowLoginModal(false);
-              }}
-              className="space-y-4"
-            >
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-600 block">ADMINISTRATOR PASSWORD</label>
-                <input
-                  type="password"
-                  required
-                  autoFocus
-                  placeholder="Password (e.g. admin)"
-                  value={loginPassword}
-                  onChange={(e) => {
-                    setLoginPassword(e.target.value);
-                    setLoginError("");
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:border-slate-400 focus:bg-white"
-                />
-                {loginError && <p className="text-[10px] font-bold text-red-500">{loginError}</p>}
-                <p className="text-[10px] text-slate-400 font-semibold italic">Hint: Enter 'admin' or any password to login.</p>
-              </div>
-
-              <div className="flex gap-2.5 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowLoginModal(false)}
-                  className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-lg text-xs transition-all cursor-pointer text-center"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg text-xs transition-all cursor-pointer text-center"
-                >
-                  Verify & Enter
-                </button>
-              </div>
-            </form>
+              )}
+ 
+              {loginError && (
+                <p className="text-[11px] font-bold text-red-500 bg-red-50 border border-red-100 p-3 rounded-lg leading-relaxed">
+                  {loginError}
+                </p>
+              )}
+ 
+              <button
+                type="button"
+                onClick={() => setShowLoginModal(false)}
+                className="w-full py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer text-center"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
