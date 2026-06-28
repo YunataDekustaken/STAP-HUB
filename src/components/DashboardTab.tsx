@@ -80,12 +80,6 @@ export default function DashboardTab({
     <div className="space-y-6" id="dashboard-tab">
       
       {/* 2. Notification / Active Bar */}
-      <div className="bg-amber-50 border border-amber-100 p-3 rounded-xl flex items-center justify-between text-xs font-semibold mb-4">
-        <div className="text-amber-800 font-bold flex items-center gap-2">
-          <span>📢</span> Notification of admin announcement...
-        </div>
-        <X className="h-4 w-4 text-amber-600 cursor-pointer hover:text-amber-900" />
-      </div>
       <div className="flex items-center justify-between text-xs font-semibold pt-2">
         <div className="flex items-center gap-2.5">
           <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide flex items-center gap-1.5 ${
@@ -430,24 +424,6 @@ export default function DashboardTab({
             Streams are sourced directly from STAP Node hardware at the intersection via local network.
           </div>
 
-          {/* Traffic Analytics and Logs area */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-             <div className="flex justify-between items-center">
-                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest block">TRAFFIC ANALYTICS</span>
-                <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full">5 MIN INTERVAL</span>
-             </div>
-             <div className="text-2xl font-black text-slate-800">89% LOS</div>
-             <p className="text-[11px] text-slate-500 font-medium">Level of Service (LOS) Efficiency</p>
-          </div>
-          
-          <div className="bg-rose-50 p-5 rounded-2xl border border-rose-100 shadow-xs space-y-3">
-             <span className="text-[9px] text-rose-500 font-bold uppercase tracking-widest block">LIVE TRAFFIC LOGS</span>
-             <div className="text-[11px] text-rose-800 font-medium leading-relaxed">
-               - 10:24 AM: Accident detected on East lane.<br/>
-               - 09:15 AM: Gridlock resolved on South lane.<br/>
-               - 08:00 AM: Peak hour flow optimization.
-             </div>
-          </div>
         </div>
       </div>
     </div>
