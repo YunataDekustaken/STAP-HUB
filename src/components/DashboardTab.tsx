@@ -16,7 +16,8 @@ import {
   Info,
   Maximize,
   X,
-  Minimize2
+  Minimize2,
+  Activity
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
