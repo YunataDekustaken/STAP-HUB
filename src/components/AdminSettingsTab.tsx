@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { User, FirebaseConnectionConfig, Role } from "../types";
-import { Shield, Key, Database, RefreshCw, CheckCircle2, UserCheck, Play, HelpCircle } from "lucide-react";
+import { Shield, Key, Database, RefreshCw, CheckCircle2, UserCheck, Play, HelpCircle, Mail, HardDrive, ExternalLink } from "lucide-react";
 
 interface AdminSettingsTabProps {
   currentUser: User;
@@ -30,6 +30,18 @@ export default function AdminSettingsTab({
 
   const [streamUrl, setStreamUrl] = useState(pythonStreamUrl);
   const [notification, setNotification] = useState<string | null>(null);
+
+  const handleConnectGoogle = async () => {
+    try {
+      const res = await fetch("/api/auth/google/url");
+      const { url } = await res.json();
+      window.open(url, "google_auth_popup", "width=600,height=700");
+    } catch (err) {
+      console.error("Failed to get Google Auth URL:", err);
+      setNotification("Failed to initiate Google connection.");
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
 
   // Default credentials documentation
   const officialRolesList: { name: string; email: string; role: Role; desc: string }[] = [
@@ -171,6 +183,40 @@ export default function AdminSettingsTab({
                 <div>• South: <span className="text-slate-500 select-all">{streamUrl}/video_feed/south</span></div>
                 <div>• East: <span className="text-slate-500 select-all">{streamUrl}/video_feed/east</span></div>
                 <div>• West: <span className="text-slate-500 select-all">{streamUrl}/video_feed/west</span></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Google Workspace API Bridge */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-lg">
+            <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2 mb-2">
+              <Mail className="h-4.5 w-4.5 text-blue-400" />
+              Google Workspace API Bridge
+            </h2>
+            <p className="text-xs text-slate-400 mb-5 leading-relaxed">
+              Connect your Gmail and Drive accounts to reply to footage requests and access video files directly from the STAP interface.
+            </p>
+
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={handleConnectGoogle}
+                className="w-full flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-900 px-4 py-3 rounded-xl transition-all active:scale-95 text-xs font-bold shadow-sm"
+              >
+                <img src="https://www.google.com/favicon.ico" className="h-4 w-4" alt="Google" />
+                Connect Google Account
+              </button>
+
+              <div className="p-3 bg-blue-500/5 rounded-xl border border-blue-500/10 space-y-2">
+                <div className="flex items-center gap-2 text-[10px] text-blue-400 font-bold uppercase tracking-wider">
+                  <Info className="h-3 w-3" /> Setup Instructions
+                </div>
+                <p className="text-[10px] text-slate-400 leading-normal">
+                  1. Authorize via the button above.<br />
+                  2. Copy the <b>Refresh Token</b> shown in the new window.<br />
+                  3. Add it to <b>GOOGLE_REFRESH_TOKEN</b> in AI Studio Secrets.<br />
+                  4. Also ensure <b>GOOGLE_CLIENT_ID</b> and <b>SECRET</b> are set.
+                </p>
               </div>
             </div>
           </div>

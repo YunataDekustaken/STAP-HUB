@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import * as admin from "firebase-admin";
+import { google } from "googleapis";
 
 dotenv.config();
 
@@ -147,6 +148,24 @@ const CAMERA_ID_TO_LANE: Record<number, "NORTH" | "SOUTH" | "EAST" | "WEST"> = {
 };
 
 const AUTHORIZATION_TOKEN = "node_alpha_J7FVxdRBqwCBWQSdiKBN742lMHuEPX5A";
+
+// --- GOOGLE WORKSPACE API SETUP (Manual Connection) ---
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN || "";
+const APP_URL = process.env.APP_URL || "http://localhost:3000";
+
+const oauth2Client = new google.auth.OAuth2(
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  `${APP_URL}/api/auth/google/callback`
+);
+
+if (GOOGLE_REFRESH_TOKEN) {
+  oauth2Client.setCredentials({
+    refresh_token: GOOGLE_REFRESH_TOKEN
+  });
+}
 
 // Serverless safe Firebase Admin Initialization
 const HAS_FIREBASE_CREDS = !!(process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY);
@@ -652,6 +671,114 @@ app.post("/api/v1/control", asyncHandler(async (req: Request, res: Response) => 
   await syncStateToFirestore();
 
   res.json({ success: true, state: systemState });
+}));
+
+// --- API ROUTE: Google Auth - Get URL ---
+app.get("/api/auth/google/url", (req: Request, res: Response) => {
+  const scopes = [
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ];
+
+  const url = oauth2Client.generateAuthUrl({
+    access_type: "offline",
+    scope: scopes,
+    prompt: "consent"
+  });
+
+  res.json({ url });
+});
+
+// --- API ROUTE: Google Auth - Callback ---
+app.get("/api/auth/google/callback", asyncHandler(async (req: Request, res: Response) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send("No code provided.");
+
+  const { tokens } = await oauth2Client.getToken(code as string);
+  
+  // In a real app, you'd store these tokens securely in a DB linked to the user.
+  // For this "manual connection", we'll just show them so the user can add to secrets.
+  const refreshToken = tokens.refresh_token;
+
+  res.send(`
+    <html>
+      <body style="font-family: sans-serif; padding: 40px; line-height: 1.6;">
+        <h2 style="color: #22C55E;">✓ Google Account Connected!</h2>
+        <p>You have successfully authorized the application.</p>
+        ${refreshToken ? `
+          <div style="background: #F1F5F9; padding: 20px; border-radius: 12px; margin: 20px 0;">
+            <p style="font-weight: bold; margin-top: 0;">Copy this REFRESH TOKEN and add it to your GOOGLE_REFRESH_TOKEN environment variable in AI Studio:</p>
+            <code style="word-break: break-all; background: #FFF; padding: 10px; display: block; border: 1px solid #E2E8F0;">${refreshToken}</code>
+          </div>
+        ` : `<p style="color: #64748B;">No new refresh token issued (you may have already authorized). If you need a new one, revoke access in your Google Account settings first.</p>`}
+        <button onclick="window.close()" style="padding: 10px 20px; background: #1E293B; color: white; border: none; border-radius: 8px; cursor: pointer;">Close Window</button>
+        <script>
+          if (window.opener) {
+            window.opener.postMessage({ type: "GOOGLE_AUTH_SUCCESS", refreshToken: "${refreshToken || ''}" }, "*");
+          }
+        </script>
+      </body>
+    </html>
+  `);
+}));
+
+// --- API ROUTE: Gmail - Send Reply to Footage Request ---
+app.post("/api/footage-requests/reply", asyncHandler(async (req: Request, res: Response) => {
+  if (!GOOGLE_REFRESH_TOKEN) {
+    return res.status(400).json({ success: false, error: "Google Workspace not connected. Please set GOOGLE_REFRESH_TOKEN." });
+  }
+
+  const { to, subject, body } = req.body;
+  if (!to || !body) {
+    return res.status(400).json({ success: false, error: "Missing 'to' or 'body' in request." });
+  }
+
+  const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+  
+  // Create raw email string
+  const utf8Subject = `=?utf-8?B?${Buffer.from(subject || "Response to Footage Request").toString("base64")}?=`;
+  const messageParts = [
+    `To: ${to}`,
+    "Content-Type: text/html; charset=utf-8",
+    "MIME-Version: 1.0",
+    `Subject: ${utf8Subject}`,
+    "",
+    body
+  ];
+  const message = messageParts.join("\n");
+
+  // The body needs to be base64url encoded
+  const encodedMessage = Buffer.from(message)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  await gmail.users.messages.send({
+    userId: "me",
+    requestBody: {
+      raw: encodedMessage,
+    },
+  });
+
+  res.json({ success: true, message: "Email sent successfully via Gmail API." });
+}));
+
+// --- API ROUTE: Google Drive - List Video Files ---
+app.get("/api/google/drive-files", asyncHandler(async (req: Request, res: Response) => {
+  if (!GOOGLE_REFRESH_TOKEN) {
+    return res.status(400).json({ success: false, error: "Google Workspace not connected." });
+  }
+
+  const drive = google.drive({ version: "v3", auth: oauth2Client });
+  const response = await drive.files.list({
+    q: "mimeType contains 'video/'",
+    fields: "files(id, name, webViewLink, thumbnailLink, size, createdTime)",
+    pageSize: 20
+  });
+
+  res.json({ success: true, files: response.data.files });
 }));
 
 // Global Express error-handling middleware
