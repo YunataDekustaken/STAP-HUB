@@ -1,5 +1,4 @@
 import express, { Request, Response } from "express";
-import * as admin from "firebase-admin";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -7,7 +6,7 @@ dotenv.config();
 const app = express();
 app.use(express.json({ limit: "15mb" }));
 
-// Clean CORS Policy 
+// Clean CORS Middleware
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -17,20 +16,29 @@ app.use((req, res, next) => {
 });
 
 const AUTHORIZATION_TOKEN = "node_alpha_J7FVxdRBqwCBWQSdiKBN742lMHuEPX5A";
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "stap-hub";
+const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
 
-// Serverless-Safe Firebase Admin Initialize
-if ((process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID) && !admin.apps.length) {
-  try {
-    admin.initializeApp({
-      projectId: process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID
-    });
-    console.log("[STAP SERVERLESS] Firebase Admin initialized successfully.");
-  } catch (err) {
-    console.error("[STAP SERVERLESS] Firebase Admin init error:", err);
+// Helper to interact with Firestore via pure, stateless HTTP REST API
+async function firestoreREST(method: "GET" | "PATCH", documentPath: string, data?: any)作 {
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${documentPath}${FIREBASE_API_KEY ? `?key=${FIREBASE_API_KEY}` : ""}`;
+  
+  const options: RequestInit = {
+    method: method,
+    headers: { "Content-Type": "application/json" }
+  };
+
+  if (data && method === "PATCH") {
+    options.body = JSON.stringify(data);
   }
-}
 
-const db = admin.apps.length ? admin.firestore() : null;
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Firestore REST Error (${res.status}): ${errText}`);
+  }
+  return res.json();
+}
 
 // --- API ROUTE: Handle Python Ledger Uploads ---
 app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
@@ -42,34 +50,35 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
 
     const { filename, csvData } = req.body;
     if (!filename || typeof csvData !== "string") {
-      return res.status(400).json({ success: false, error: "Missing filename or valid csvData string in request body." });
-    }
-
-    if (!db) {
-      return res.status(503).json({ success: false, error: "Database initialization failed or credentials unconfigured on Vercel." });
+      return res.status(400).json({ success: false, error: "Missing filename or valid csvData string." });
     }
 
     const cleanFilename = filename.replace(/\\/g, "/").split("/").pop() || "summary.csv";
     const safeDocId = cleanFilename.replace(/[.#$/[\]]/g, "_");
 
-    // Stateless database insertion
-    await db.collection("ledgers").doc(safeDocId).set({
-      filename: cleanFilename,
-      size: Buffer.byteLength(csvData, "utf8"),
-      uploadedAt: new Date().toISOString(),
-      csvData: csvData,
-      syncedAt: new Date().toISOString()
-    });
+    // Map fields directly to the Firestore REST API JSON structure
+    const firestorePayload = {
+      fields: {
+        filename: { stringValue: cleanFilename },
+        size: { integerValue: String(Buffer.byteLength(csvData, "utf8")) },
+        uploadedAt: { stringValue: new Date().toISOString() },
+        csvData: { stringValue: csvData },
+        syncedAt: { stringValue: new Date().toISOString() }
+      }
+    };
+
+    // Upsert using the PATCH method over HTTP REST
+    await firestoreREST("PATCH", `ledgers/${safeDocId}`, firestorePayload);
 
     return res.json({
       success: true,
-      message: `Ledger ${cleanFilename} processed successfully to cloud storage.`,
+      message: `Ledger ${cleanFilename} uploaded and processed successfully to the cloud.`,
       savedLocally: false,
       savedToCloud: true
     });
 
   } catch (err: any) {
-    console.error("[STAP SERVERLESS CRASH] Endpoint encountered an error:", err);
+    console.error("[STAP REST ERROR]", err);
     return res.status(500).json({ success: false, error: err.message || "Internal serverless worker error." });
   }
 });
@@ -77,28 +86,55 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
 // --- API ROUTE: Synchronize System State ---
 app.post("/api/v1/control", async (req: Request, res: Response) => {
   try {
-    if (!db) return res.status(503).json({ success: false, error: "Database offline" });
-    
     const authHeader = req.headers.authorization;
     const userAgent = req.headers["user-agent"] || "";
     const isFromPython = (authHeader === `Bearer ${AUTHORIZATION_TOKEN}`) || userAgent.toLowerCase().includes("python");
 
     const { mode, activeLane, weather, lanes, remainingSecs, greenDuration } = req.body;
-    const docRef = db.collection("system").doc("state");
-    
-    const snap = await docRef.get();
-    let currentState = snap.exists ? snap.data() || {} : {};
 
-    if (mode !== undefined) currentState.mode = mode;
-    if (activeLane !== undefined) currentState.activeLane = activeLane;
-    if (weather !== undefined) currentState.weather = weather;
-    if (remainingSecs !== undefined) currentState.remainingSecs = remainingSecs;
-    if (greenDuration !== undefined) currentState.greenDuration = greenDuration;
-    if (lanes) currentState.lanes = { ...currentState.lanes, ...lanes };
-    if (isFromPython) currentState.heartbeatTime = Date.now();
+    // Fetch existing state via REST API to merge fields dynamically
+    let currentState: any = {};
+    try {
+      const existing = await firestoreREST("GET", "system/state");
+      if (existing && existing.fields) {
+        currentState = existing.fields;
+      }
+    } catch (e) {
+      // Document doesn't exist yet, start clean
+    }
 
-    await docRef.set({ ...currentState, updatedAt: new Date().toISOString() });
-    return res.json({ success: true, state: currentState });
+    // Helper to format primitives for REST structure
+    const setVal = (type: "stringValue" | "integerValue", val: any) => val !== undefined ? { [type]: String(val) } : null;
+
+    if (mode) currentState.mode = { stringValue: mode };
+    if (activeLane) currentState.activeLane = { stringValue: activeLane };
+    if (weather) currentState.weather = { stringValue: weather };
+    if (remainingSecs !== undefined) currentState.remainingSecs = { integerValue: String(remainingSecs) };
+    if (greenDuration !== undefined) currentState.greenDuration = { integerValue: String(greenDuration) };
+    if (isFromPython) currentState.heartbeatTime = { integerValue: String(Date.now()) };
+
+    if (lanes) {
+      // Build simple nested map for lane data mapping if present
+      const currentLanesMap = currentState.lanes?.mapValue?.fields || {};
+      Object.keys(lanes).forEach((key) => {
+        currentLanesMap[key] = {
+          mapValue: {
+            fields: {
+              count: { integerValue: String(lanes[key].count || 0) },
+              density: { integerValue: String(lanes[key].density || 0) },
+              light: { stringValue: lanes[key].light || "RED" },
+              los: { stringValue: lanes[key].los || "A" }
+            }
+          }
+        };
+      });
+      currentState.lanes = { mapValue: { fields: currentLanesMap } };
+    }
+
+    currentState.updatedAt = { stringValue: new Date().toISOString() };
+
+    await firestoreREST("PATCH", "system/state", { fields: currentState });
+    return res.json({ success: true, message: "State synced successfully." });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -107,21 +143,28 @@ app.post("/api/v1/control", async (req: Request, res: Response) => {
 // --- API ROUTE: Real-time Status ---
 app.get("/api/v1/status", async (req: Request, res: Response) => {
   try {
-    if (!db) return res.status(503).json({ success: false, error: "Database offline" });
-    const snap = await db.collection("system").doc("state").get();
-    const currentState = snap.exists ? snap.data() || {} : {};
-    const nodeOnline = Date.now() - (currentState.heartbeatTime || 0) < 20000;
-    
+    let fields: any = {};
+    try {
+      const data = await firestoreREST("GET", "system/state");
+      fields = data.fields || {};
+    } catch (e) {}
+
+    const heartbeat = Number(fields.heartbeatTime?.integerValue || 0);
+    const nodeOnline = Date.now() - heartbeat < 20000;
+
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
-    return res.json({ ...currentState, nodeOnline, serverTime: new Date().toISOString() });
+    return res.json({
+      mode: fields.mode?.stringValue || "AUTO",
+      activeLane: fields.activeLane?.stringValue || "NORTH",
+      weather: fields.weather?.stringValue || "SUNNY",
+      remainingSecs: Number(fields.remainingSecs?.integerValue || 0),
+      greenDuration: Number(fields.greenDuration?.integerValue || 0),
+      nodeOnline,
+      serverTime: new Date().toISOString()
+    });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
-});
-
-// Failsafe catch-all for missing assets
-app.get("/api/v1/debug-version", (req: Request, res: Response) => {
-  res.json({ success: true, serverlessMode: true, firebaseConnected: !!db });
 });
 
 export default app;
