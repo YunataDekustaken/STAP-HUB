@@ -21,7 +21,16 @@ import {
   FileSpreadsheet,
   Eye,
   CheckCircle2,
-  ArrowUpRight
+  ArrowUpRight,
+  Search,
+  Download,
+  MoreVertical,
+  ChevronDown,
+  X,
+  Save,
+  FileText,
+  Filter,
+  Check
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -73,6 +82,15 @@ export default function AnalyticsTab() {
   const [cloudLedgers, setCloudLedgers] = useState<any[]>([]);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState<boolean>(true);
+
+  // CRUD & Interactive State
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [selectedLedgerIds, setSelectedLedgerIds] = useState<string[]>([]);
+  const [isViewerOpen, setIsViewerOpen] = useState<boolean>(false);
+  const [viewingLedger, setViewingLedger] = useState<UnifiedLedger | null>(null);
+  const [viewerCsvData, setViewerCsvData] = useState<string>("");
+  const [isEditingViewer, setIsEditingViewer] = useState<boolean>(false);
+  const [viewerStatus, setViewerStatus] = useState<string | null>(null);
 
   // Fetch local ledgers from Express server
   const fetchLocalLedgers = async () => {
@@ -200,6 +218,16 @@ export default function AnalyticsTab() {
     );
   }, [localLedgers, cloudLedgers]);
 
+  // Search and Filter Logic
+  const filteredLedgers = useMemo(() => {
+    if (!searchTerm) return unifiedLedgers;
+    const term = searchTerm.toLowerCase();
+    return unifiedLedgers.filter(l => 
+      l.filename.toLowerCase().includes(term) || 
+      new Date(l.uploadedAt).toLocaleString().toLowerCase().includes(term)
+    );
+  }, [unifiedLedgers, searchTerm]);
+
   // Handle Auto-Sync side effects
   useEffect(() => {
     const { db } = getFirebaseInstances();
@@ -238,6 +266,117 @@ export default function AnalyticsTab() {
       alert(`Failed to load file for analysis: ${err.message}`);
       setSyncStatus(null);
     }
+  };
+
+  // Open Viewer
+  const openViewer = async (ledger: UnifiedLedger) => {
+    try {
+      setSyncStatus(`Opening ${ledger.filename}...`);
+      let csvContent = ledger.csvData;
+
+      if (!csvContent) {
+        const res = await fetch(`/api/v1/ledgers/${encodeURIComponent(ledger.filename)}`);
+        if (!res.ok) throw new Error("Failed to load file content.");
+        const data = await res.json();
+        csvContent = data.csvData;
+      }
+
+      setViewingLedger(ledger);
+      setViewerCsvData(csvContent || "");
+      setIsEditingViewer(false);
+      setIsViewerOpen(true);
+      setSyncStatus(null);
+    } catch (err: any) {
+      alert(`Error opening viewer: ${err.message}`);
+      setSyncStatus(null);
+    }
+  };
+
+  // Handle CSV Download
+  const handleDownload = (ledger: UnifiedLedger, customContent?: string) => {
+    const content = customContent || ledger.csvData;
+    if (!content) {
+      alert("No data available to download.");
+      return;
+    }
+    const blob = new Blob([content], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = ledger.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Save Edits
+  const handleSaveEdit = async () => {
+    if (!viewingLedger) return;
+
+    try {
+      setViewerStatus("Validating and Saving...");
+      const res = await fetch(`/api/v1/ledgers/${encodeURIComponent(viewingLedger.filename)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csvData: viewerCsvData })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update ledger.");
+
+      setViewerStatus("Saved Successfully!");
+      setIsEditingViewer(false);
+      
+      // Update local cache if possible or just refresh
+      await fetchLocalLedgers();
+      
+      setTimeout(() => setViewerStatus(null), 3000);
+    } catch (err: any) {
+      setViewerStatus(`Error: ${err.message}`);
+      setTimeout(() => setViewerStatus(null), 5000);
+    }
+  };
+
+  // Bulk Actions
+  const toggleSelectLedger = (filename: string) => {
+    setSelectedLedgerIds(prev => 
+      prev.includes(filename) ? prev.filter(id => id !== filename) : [...prev, filename]
+    );
+  };
+
+  const selectAllFiltered = () => {
+    if (selectedLedgerIds.length === filteredLedgers.length) {
+      setSelectedLedgerIds([]);
+    } else {
+      setSelectedLedgerIds(filteredLedgers.map(l => l.filename));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Delete ${selectedLedgerIds.length} selected ledgers permanently?`)) return;
+
+    try {
+      setSyncStatus(`Bulk deleting ${selectedLedgerIds.length} files...`);
+      for (const filename of selectedLedgerIds) {
+        const ledger = unifiedLedgers.find(l => l.filename === filename);
+        if (ledger) await deleteLedger(ledger);
+      }
+      setSelectedLedgerIds([]);
+      setSyncStatus("Bulk delete completed.");
+      setTimeout(() => setSyncStatus(null), 3000);
+    } catch (err: any) {
+      alert(`Bulk delete error: ${err.message}`);
+      setSyncStatus(null);
+    }
+  };
+
+  const handleBulkDownload = () => {
+    if (selectedLedgerIds.length === 0) return;
+    
+    // For simplicity, we'll concatenate if they are few, or alert. 
+    // In a real app, you'd use jszip.
+    alert("In a production environment, this would trigger a ZIP download of all selected files. For this demo, please download individually.");
   };
 
   // Safe ledger removal
@@ -584,27 +723,78 @@ export default function AnalyticsTab() {
 
           {/* Ledgers List Table Card */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Compiled Master Ledgers</h3>
                 <p className="text-xs text-slate-500">List of all exported absolute density sheets logged across nodes.</p>
               </div>
-              <button
-                onClick={fetchLocalLedgers}
-                className="flex items-center gap-1 text-[11px] font-bold text-[#4E6290] hover:text-[#3D4F75] bg-[#4E6290]/5 hover:bg-[#4E6290]/10 px-2.5 py-1.5 rounded-lg transition-all"
-              >
-                <RefreshCw className="h-3 w-3" />
-                <span>Refresh Logs</span>
-              </button>
+              
+              <div className="flex items-center gap-3">
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Search ledgers..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#4E6290]/20 focus:border-[#4E6290] transition-all w-full md:w-64"
+                  />
+                </div>
+
+                <button
+                  onClick={fetchLocalLedgers}
+                  className="flex items-center gap-1 text-[11px] font-bold text-[#4E6290] hover:text-[#3D4F75] bg-[#4E6290]/5 hover:bg-[#4E6290]/10 px-2.5 py-2 rounded-lg transition-all"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Refresh</span>
+                </button>
+              </div>
             </div>
 
-            {unifiedLedgers.length === 0 ? (
+            {/* Bulk Action Bar */}
+            {selectedLedgerIds.length > 0 && (
+              <div className="bg-[#4E6290] text-white px-5 py-2.5 flex items-center justify-between animate-slideIn">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-black uppercase tracking-wider">{selectedLedgerIds.length} Files Selected</span>
+                  <div className="h-4 w-px bg-white/20" />
+                  <button 
+                    onClick={handleBulkDownload}
+                    className="flex items-center gap-1.5 text-[10px] font-bold hover:bg-white/10 px-2 py-1 rounded-md transition-all"
+                  >
+                    <Download className="h-3 w-3" />
+                    <span>Download Selection</span>
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={handleBulkDelete}
+                    className="flex items-center gap-1.5 text-[10px] font-bold bg-rose-500 hover:bg-rose-600 px-3 py-1 rounded-md transition-all"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span>Delete Permanently</span>
+                  </button>
+                  <button 
+                    onClick={() => setSelectedLedgerIds([])}
+                    className="p-1 hover:bg-white/10 rounded-md transition-all"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {filteredLedgers.length === 0 ? (
               <div className="p-12 text-center text-slate-400 text-xs space-y-3">
                 <FileSpreadsheet className="h-10 w-10 text-slate-300 mx-auto animate-pulse" />
                 <div className="space-y-1">
-                  <p className="font-extrabold text-slate-700 text-sm">No Ledger Files Uploaded Yet</p>
+                  <p className="font-extrabold text-slate-700 text-sm">
+                    {searchTerm ? "No results matching your search" : "No Ledger Files Uploaded Yet"}
+                  </p>
                   <p className="text-[11px] text-slate-400 max-w-sm mx-auto font-medium">
-                    Shut down your local Python controller process (e.g. using Ctrl+C) to trigger its automatic compiled ledger export and POST directly to STAP Hub.
+                    {searchTerm 
+                      ? "Try adjusting your filters or search terms." 
+                      : "Shut down your local Python controller process to trigger its automatic compiled ledger export."}
                   </p>
                 </div>
               </div>
@@ -613,6 +803,14 @@ export default function AnalyticsTab() {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200/80 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                      <th className="px-5 py-3 w-10">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedLedgerIds.length > 0 && selectedLedgerIds.length === filteredLedgers.length}
+                          onChange={selectAllFiltered}
+                          className="rounded border-slate-300 text-[#4E6290] focus:ring-[#4E6290]"
+                        />
+                      </th>
                       <th className="px-5 py-3">File Name</th>
                       <th className="px-5 py-3">Size (KB)</th>
                       <th className="px-5 py-3">Export/Upload Date</th>
@@ -621,12 +819,21 @@ export default function AnalyticsTab() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                    {unifiedLedgers.map((ledger) => {
+                    {filteredLedgers.map((ledger) => {
                       const sizeInKb = (ledger.size / 1024).toFixed(2);
                       const formattedDate = new Date(ledger.uploadedAt).toLocaleString();
+                      const isSelected = selectedLedgerIds.includes(ledger.filename);
 
                       return (
-                        <tr key={ledger.filename} className="hover:bg-slate-50/50">
+                        <tr key={ledger.filename} className={`transition-colors ${isSelected ? "bg-[#4E6290]/5" : "hover:bg-slate-50/50"}`}>
+                          <td className="px-5 py-3.5">
+                            <input 
+                              type="checkbox" 
+                              checked={isSelected}
+                              onChange={() => toggleSelectLedger(ledger.filename)}
+                              className="rounded border-slate-300 text-[#4E6290] focus:ring-[#4E6290]"
+                            />
+                          </td>
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-2.5">
                               <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
@@ -667,33 +874,39 @@ export default function AnalyticsTab() {
                             )}
                           </td>
                           <td className="px-5 py-3.5 text-right">
-                            <div className="inline-flex items-center gap-1.5">
+                            <div className="inline-flex items-center gap-1">
                               <button
-                                onClick={() => analyzeLedger(ledger)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-lg transition-all cursor-pointer"
-                                title="Load file parameters into charts and maps simulator"
+                                onClick={() => openViewer(ledger)}
+                                className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 rounded-lg transition-all"
+                                title="View/Edit file content"
                               >
-                                <Eye className="h-3.5 w-3.5" />
-                                <span>Analyze Log</span>
+                                <Eye className="h-4 w-4" />
+                              </button>
+                              
+                              <button
+                                onClick={() => handleDownload(ledger)}
+                                className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-[#4E6290] rounded-lg transition-all"
+                                title="Download CSV"
+                              >
+                                <Download className="h-4 w-4" />
                               </button>
 
-                              {ledger.source === "local" && (
-                                <button
-                                  onClick={() => syncToCloud(ledger)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-[#4E6290] hover:bg-[#3D4F75] text-white font-bold text-[11px] rounded-lg transition-all cursor-pointer"
-                                  title="Upload CSV rows to Firebase Firestore database"
-                                >
-                                  <CloudLightning className="h-3.5 w-3.5 text-yellow-400 animate-pulse" />
-                                  <span>Sync Cloud</span>
-                                </button>
-                              )}
+                              <button
+                                onClick={() => analyzeLedger(ledger)}
+                                className="p-1.5 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 rounded-lg transition-all"
+                                title="Analyze in charts"
+                              >
+                                <ArrowUpRight className="h-4 w-4" />
+                              </button>
+
+                              <div className="h-4 w-px bg-slate-100 mx-0.5" />
 
                               <button
                                 onClick={() => deleteLedger(ledger)}
-                                className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-transparent hover:border-rose-100 rounded-lg transition-all cursor-pointer"
-                                title="Delete file permanently"
+                                className="p-1.5 hover:bg-rose-50 text-slate-300 hover:text-rose-600 rounded-lg transition-all"
+                                title="Delete permanently"
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash2 className="h-4 w-4" />
                               </button>
                             </div>
                           </td>
@@ -1272,10 +1485,140 @@ export default function AnalyticsTab() {
           </table>
         </div>
       </div>
+        </>
+      )}
     </>
   )}
-  </>
-  )}
-</div>
+
+  {/* 4. MODAL: LEDGER DATA VIEWER / EDITOR */}
+      {isViewerOpen && viewingLedger && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-8">
+          <div 
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fadeIn" 
+            onClick={() => {
+              if (isEditingViewer && !confirm("Unsaved changes will be lost. Close anyway?")) return;
+              setIsViewerOpen(false);
+            }}
+          />
+          <div className="relative w-full max-w-5xl max-h-[90vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-scaleIn">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-[#4E6290] text-white rounded-xl shadow-sm">
+                  <FileText className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight truncate max-w-md">
+                    {viewingLedger.filename}
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-bold">
+                    {(viewingLedger.size / 1024).toFixed(2)} KB • Uploaded {new Date(viewingLedger.uploadedAt).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleDownload(viewingLedger, viewerCsvData)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-lg transition-all"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download</span>
+                </button>
+                <button
+                  onClick={() => setIsViewerOpen(false)}
+                  className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 rounded-lg transition-all"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Toolbar */}
+            <div className="px-6 py-3 border-b border-slate-100 flex items-center justify-between bg-white sticky top-0 z-10">
+              <div className="flex gap-1.5">
+                <button 
+                  onClick={() => setIsEditingViewer(false)}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                    !isEditingViewer ? "bg-[#4E6290] text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                  }`}
+                >
+                  Table View
+                </button>
+                <button 
+                  onClick={() => setIsEditingViewer(true)}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                    isEditingViewer ? "bg-[#4E6290] text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"
+                  }`}
+                >
+                  Raw CSV Editor
+                </button>
+              </div>
+
+              {isEditingViewer ? (
+                <div className="flex items-center gap-3">
+                  {viewerStatus && (
+                    <span className="text-[10px] font-bold text-teal-600 animate-pulse">{viewerStatus}</span>
+                  )}
+                  <button
+                    onClick={handleSaveEdit}
+                    className="flex items-center gap-1.5 px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-black text-[10px] uppercase rounded-lg shadow-sm transition-all"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    <span>Save Changes</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="text-[10px] text-slate-400 font-bold flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5" />
+                  <span>Interactive spreadsheet view powered by STAP Hub</span>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-auto p-0 bg-slate-50/30">
+              {isEditingViewer ? (
+                <textarea
+                  value={viewerCsvData}
+                  onChange={(e) => setViewerCsvData(e.target.value)}
+                  className="w-full h-full min-h-[400px] p-6 font-mono text-xs text-slate-700 bg-white outline-none resize-none"
+                  spellCheck={false}
+                />
+              ) : (
+                <div className="p-6">
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <table className="w-full border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                          {viewerCsvData.split("\n")[0]?.split(",").map((header, i) => (
+                            <th key={i} className="px-4 py-3 text-left border-r border-slate-200 last:border-0">{header.trim()}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {viewerCsvData.split("\n").slice(1).filter(l => l.trim()).map((line, rowIdx) => (
+                          <tr key={rowIdx} className="hover:bg-slate-50/50">
+                            {line.split(",").map((cell, cellIdx) => (
+                              <td key={cellIdx} className="px-4 py-2.5 border-r border-slate-100 last:border-0 text-slate-600 font-medium">
+                                {cell.trim()}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {viewerCsvData.split("\n").length <= 1 && (
+                    <div className="text-center py-12 text-slate-400 italic">No valid rows found in CSV.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

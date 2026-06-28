@@ -54,6 +54,53 @@ function getUploadsDir(): string {
   return dir;
 }
 
+// Validate structure of uploaded or edited CSV ledger files
+function validateCSV(csvText: string): { valid: boolean; error?: string } {
+  if (!csvText || typeof csvText !== "string") {
+    return { valid: false, error: "Empty or invalid text format." };
+  }
+  const lines = csvText.split(/\r?\n/).map(l => l.trim());
+  
+  let hasSessionStart = false;
+  let hasInterval = false;
+  let hasSummary = false;
+  let hasLaneApproach = false;
+
+  for (const line of lines) {
+    if (line.includes("Session Start Initialization Time") || line.includes("Session Start")) hasSessionStart = true;
+    if (line.startsWith("--- INTERVAL RECORDING SNAPSHOT")) hasInterval = true;
+    if (line.includes("FINAL INTERSECTION REPORT SUMMARY MATRIX") || line.includes("FINAL INTERSECTION REPORT")) hasSummary = true;
+    if (line.includes("Lane Approach") || line.includes("Approach Lane Name")) hasLaneApproach = true;
+  }
+
+  if (!hasSessionStart) {
+    return { valid: false, error: "Missing 'Session Start' metadata header." };
+  }
+  if (!hasInterval && !hasSummary) {
+    return { valid: false, error: "Ledger must contain at least one Interval Snapshot or a Final Summary." };
+  }
+  if (!hasLaneApproach) {
+    return { valid: false, error: "Missing column headers row (e.g., 'Lane Approach' or 'Approach Lane Name')." };
+  }
+
+  try {
+    let laneCount = 0;
+    for (const line of lines) {
+      const parts = line.split(",");
+      if (parts.length > 0 && ["NORTH", "SOUTH", "EAST", "WEST"].includes(parts[0].trim())) {
+        laneCount++;
+      }
+    }
+    if (laneCount === 0) {
+      return { valid: false, error: "No lane data rows (NORTH, SOUTH, EAST, or WEST) found." };
+    }
+  } catch (e) {
+    return { valid: false, error: "Invalid CSV table structure." };
+  }
+
+  return { valid: true };
+}
+
 // Set up server-side type and state structures to track physical hardware node status
 interface LaneData {
   count: number;
@@ -423,6 +470,80 @@ app.get("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Resp
   } catch (err: any) {
     console.error("[STAP HUB] Failed to retrieve ledger content:", err);
     return res.status(500).json({ success: false, error: err.message || "Failed to retrieve file content." });
+  }
+}));
+
+// --- API ROUTE: Update a specific ledger's content ---
+app.put("/api/v1/ledgers/:filename", asyncHandler(async (req: Request, res: Response) => {
+  try {
+    const safeFilename = path.basename(req.params.filename);
+    const { csvData } = req.body;
+    const isVercel = !!process.env.VERCEL;
+
+    if (!csvData || typeof csvData !== "string") {
+      return res.status(400).json({ success: false, error: "Missing csvData string in request body." });
+    }
+
+    // Validate structure
+    const validation = validateCSV(csvData);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: `CSV Structure Validation Failed: ${validation.error}` });
+    }
+
+    const safeDocId = safeFilename.replace(/[.#$/[\]]/g, "_");
+    const byteLength = Buffer.byteLength(csvData, "utf8");
+
+    let savedLocally = false;
+    if (!isVercel) {
+      try {
+        const filePath = path.join(getUploadsDir(), safeFilename);
+        fs.writeFileSync(filePath, csvData, "utf8");
+        savedLocally = true;
+      } catch (fsErr) {
+        console.warn("[STAP HUB] Local write failed on edit:", fsErr);
+      }
+    }
+
+    let savedToCloud = false;
+    if (db) {
+      try {
+        // To preserve original uploadedAt, we fetch existing
+        let uploadedAt = new Date().toISOString();
+        const docRef = db.collection("ledgers").doc(safeDocId);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          if (data && data.uploadedAt) {
+            uploadedAt = data.uploadedAt;
+          }
+        }
+
+        await withTimeout(
+          docRef.set({
+            filename: safeFilename,
+            size: byteLength,
+            uploadedAt,
+            csvData,
+            syncedAt: new Date().toISOString()
+          }),
+          5000,
+          "edit ledger Firestore set"
+        );
+        savedToCloud = true;
+      } catch (dbErr) {
+        console.error("[STAP HUB] Failed to update ledger in Firestore on edit:", dbErr);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Ledger ${safeFilename} updated successfully.`,
+      savedLocally,
+      savedToCloud
+    });
+  } catch (err: any) {
+    console.error("[STAP HUB] Failed to update ledger:", err);
+    return res.status(500).json({ success: false, error: err.message || "Failed to update file." });
   }
 }));
 
