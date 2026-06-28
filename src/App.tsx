@@ -564,7 +564,7 @@ export default function App() {
           }
         } catch (localErr) {
           // Fall back gracefully to cloud check if we cannot reach local IP
-          console.debug("Direct link to local IP failed or timed out. Falling back to Cloud Proxy...");
+          // Silencing debug logs as per user request to avoid notification clutter
         }
       }
 

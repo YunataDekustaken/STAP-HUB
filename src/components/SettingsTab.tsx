@@ -251,7 +251,9 @@ export default function SettingsTab({
 
   const handleDisconnect = async () => {
     setIsNodeConnected(false);
-    setSuccessMessage("Disconnected STAP link.");
+    setNodeIp("");
+    setInputValue("");
+    setSuccessMessage("Disconnected STAP link and cleared node IP configuration.");
     setErrorMessage("");
     setLanes({
       NORTH: { count: 0, density: 0, light: "RED", los: "—" },
@@ -428,7 +430,7 @@ export default function SettingsTab({
                     {isConnecting ? "Connecting..." : "Apply Settings"}
                   </button>
 
-                  {isNodeConnected && (
+                  {(isNodeConnected || nodeIp) && (
                     <button
                       type="button"
                       onClick={handleDisconnect}
