@@ -20,7 +20,7 @@ const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
 
 // Helper to interact with Firestore via pure, stateless HTTP REST API
-async function firestoreREST(method: "GET" | "PATCH", documentPath: string, data?: any)作 {
+async function firestoreREST(method: "GET" | "PATCH", documentPath: string, data?: any) {
   const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${documentPath}${FIREBASE_API_KEY ? `?key=${FIREBASE_API_KEY}` : ""}`;
   
   const options: RequestInit = {
@@ -55,12 +55,15 @@ app.post("/api/v1/upload-ledger", async (req: Request, res: Response) => {
 
     const cleanFilename = filename.replace(/\\/g, "/").split("/").pop() || "summary.csv";
     const safeDocId = cleanFilename.replace(/[.#$/[\]]/g, "_");
+    
+    // Serverless-safe ESModule byte length check
+    const byteLength = new TextEncoder().encode(csvData).length;
 
     // Map fields directly to the Firestore REST API JSON structure
     const firestorePayload = {
       fields: {
         filename: { stringValue: cleanFilename },
-        size: { integerValue: String(Buffer.byteLength(csvData, "utf8")) },
+        size: { integerValue: String(byteLength) },
         uploadedAt: { stringValue: new Date().toISOString() },
         csvData: { stringValue: csvData },
         syncedAt: { stringValue: new Date().toISOString() }
@@ -103,9 +106,6 @@ app.post("/api/v1/control", async (req: Request, res: Response) => {
       // Document doesn't exist yet, start clean
     }
 
-    // Helper to format primitives for REST structure
-    const setVal = (type: "stringValue" | "integerValue", val: any) => val !== undefined ? { [type]: String(val) } : null;
-
     if (mode) currentState.mode = { stringValue: mode };
     if (activeLane) currentState.activeLane = { stringValue: activeLane };
     if (weather) currentState.weather = { stringValue: weather };
@@ -114,7 +114,6 @@ app.post("/api/v1/control", async (req: Request, res: Response) => {
     if (isFromPython) currentState.heartbeatTime = { integerValue: String(Date.now()) };
 
     if (lanes) {
-      // Build simple nested map for lane data mapping if present
       const currentLanesMap = currentState.lanes?.mapValue?.fields || {};
       Object.keys(lanes).forEach((key) => {
         currentLanesMap[key] = {
