@@ -1,7 +1,7 @@
 export type Lane = "NORTH" | "SOUTH" | "EAST" | "WEST";
 export type LightState = "RED" | "YELLOW" | "GREEN";
 export type SystemMode = "AUTO" | "MANUAL" | "HAZARD" | "EMERGENCY";
-export type Role = "Administrator" | "Traffic Commissioner" | "Operations Analyst" | "Inspector";
+export type Role = "Administrator" | "Traffic Commissioner" | "Operations Analyst" | "Inspector" | "Pending";
 
 export interface User {
   id: string;
