@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Lane, LightState, User, Role } from "../types";
-import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X, Clock } from "lucide-react";
+import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X, Clock, HardDrive } from "lucide-react";
 import { getFirebaseConfig, saveFirebaseConfig, getFirebaseInstances, handleFirestoreError, OperationType, STAPDatabaseManager } from "../firebase";
 import { collection, onSnapshot, doc, addDoc, setDoc, deleteDoc } from "firebase/firestore";
+import AdminSettingsTab from "./AdminSettingsTab";
 
 interface SettingsTabProps {
   nodeIp: string;
@@ -39,7 +40,9 @@ export default function SettingsTab({
   const [errorMessage, setErrorMessage] = useState("");
 
   // Sub-tabs navigation state
-  const [activeSubTab, setActiveSubTab] = useState<"general" | "users" | "pending">("general");
+  const [activeSubTab, setActiveSubTab] = useState<"general" | "users" | "pending" | "admin">("general");
+
+  const isSuperAdmin = users.find(u => u.email?.toLowerCase() === "stap.est2526@gmail.com");
 
   const activeUsers = users.filter((u) => u.role !== "Pending");
   const pendingUsers = users.filter((u) => u.role === "Pending");
@@ -345,6 +348,21 @@ export default function SettingsTab({
             </span>
           )}
         </button>
+
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => setActiveSubTab("admin")}
+            className={`flex items-center gap-2 px-5 py-3 text-xs font-bold transition-all border-b-2 cursor-pointer -mb-px rounded-t-xl whitespace-nowrap ${
+              activeSubTab === "admin"
+                ? "border-blue-600 text-blue-700 bg-white"
+                : "border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <Shield className="h-4 w-4" />
+            System & Bridge
+          </button>
+        )}
       </div>
 
       {activeSubTab === "general" && (
@@ -803,6 +821,15 @@ export default function SettingsTab({
             )}
           </div>
         </div>
+      )}
+
+      {activeSubTab === "admin" && (
+        <AdminSettingsTab
+          currentUser={users.find(u => u.email?.toLowerCase() === "stap.est2526@gmail.com") || users[0]}
+          onUpdateFirebaseConfig={() => {}}
+          pythonStreamUrl=""
+          onUpdateStreamUrl={() => {}}
+        />
       )}
 
       {/* Add New User Dialog Modal */}
