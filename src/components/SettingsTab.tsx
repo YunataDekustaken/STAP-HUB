@@ -67,6 +67,13 @@ export default function SettingsTab({
       setUserActionError("Name and email are required to register a system user.");
       return;
     }
+    
+    const emailLower = newUserEmail.trim().toLowerCase();
+    const isDuplicate = users.some(u => u.email?.toLowerCase() === emailLower);
+    if (isDuplicate) {
+      setUserActionError(`The email ${newUserEmail.trim()} is already registered.`);
+      return;
+    }
 
     const { db } = getFirebaseInstances();
     if (db && firebaseConnected) {

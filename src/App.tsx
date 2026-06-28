@@ -411,11 +411,36 @@ export default function App() {
     // 5. Live Sync Users with Firestore/Local Seeding fallback
     const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
       const list: User[] = [];
-      snapshot.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as User);
+      const seenEmails = new Set<string>();
+      const duplicatesToDelete: string[] = [];
+
+      // Sort by lastLogin or id so we prefer keeping the one that has been logged into
+      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as User));
+      docs.sort((a, b) => {
+        if (a.lastLogin && !b.lastLogin) return -1;
+        if (!a.lastLogin && b.lastLogin) return 1;
+        return 0;
       });
+
+      docs.forEach((u) => {
+        const lowerEmail = u.email?.toLowerCase();
+        if (lowerEmail) {
+          if (seenEmails.has(lowerEmail)) {
+            duplicatesToDelete.push(u.id);
+            return; // Skip adding to list
+          }
+          seenEmails.add(lowerEmail);
+        }
+        list.push(u);
+      });
+
       if (list.length > 0) {
         setUsers(list);
+        
+        // Clean up duplicates from Firestore silently
+        duplicatesToDelete.forEach(id => {
+          deleteDoc(doc(db, "users", id)).catch(e => console.error("Error auto-deleting duplicate user:", e));
+        });
       } else {
         // Seeding the empty collection in Firestore
         const initialUsers = STAPDatabaseManager.getUsers();
