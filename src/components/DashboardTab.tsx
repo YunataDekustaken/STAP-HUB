@@ -194,6 +194,13 @@ export default function DashboardTab({
 
   const pythonStreamUrl = nodeIp && nodeIp.trim() ? `http://${nodeIp.trim()}:5000` : "http://localhost:5000";
 
+  const safeLanes = {
+    NORTH: lanes?.NORTH || { count: 0, density: 0, light: "RED", los: "—" },
+    SOUTH: lanes?.SOUTH || { count: 0, density: 0, light: "RED", los: "—" },
+    EAST: lanes?.EAST || { count: 0, density: 0, light: "RED", los: "—" },
+    WEST: lanes?.WEST || { count: 0, density: 0, light: "RED", los: "—" }
+  };
+
   // Reset error states when Node IP changes
   useEffect(() => {
     setImageErrors({
@@ -250,7 +257,7 @@ export default function DashboardTab({
         {(["NORTH", "SOUTH", "EAST", "WEST"] as Lane[]).map((ln) => (
           <div key={ln} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-4">
             <div className="text-4xl font-extrabold text-slate-900 leading-none">
-              {lanes[ln].count}
+              {safeLanes[ln].count}
             </div>
             {/* Square minus sign divider/icon */}
             <div className="h-6 w-6 border border-slate-300 rounded flex items-center justify-center text-slate-400 text-xs shrink-0 font-bold select-none">
@@ -417,11 +424,11 @@ export default function DashboardTab({
                       {/* Moving dots to simulate vehicle detection if stream is offline */}
                       {imageErrors[ln] && (
                         <div className="flex justify-center gap-2 z-10 transition-opacity duration-300">
-                          {Array.from({ length: Math.min(6, lanes[ln].count) }).map((_, idx) => (
+                          {Array.from({ length: Math.min(6, safeLanes[ln].count) }).map((_, idx) => (
                             <span
                               key={idx}
                               className={`w-2 h-2 rounded-full ${
-                                lanes[ln].light === "GREEN"
+                                safeLanes[ln].light === "GREEN"
                                   ? "bg-emerald-500 animate-bounce"
                                   : "bg-rose-500"
                               }`}

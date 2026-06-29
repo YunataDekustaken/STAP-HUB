@@ -134,6 +134,60 @@ const INITIAL_REPORT_REQUESTS = [
   }
 ];
 
+function normalizeLanes(rawLanes: any): Record<Lane, { count: number; density: number; light: LightState; los: string }> {
+  const defaultLanes: Record<Lane, { count: number; density: number; light: LightState; los: string }> = {
+    NORTH: { count: 0, density: 0, light: "RED", los: "—" },
+    SOUTH: { count: 0, density: 0, light: "RED", los: "—" },
+    EAST: { count: 0, density: 0, light: "RED", los: "—" },
+    WEST: { count: 0, density: 0, light: "RED", los: "—" }
+  };
+
+  if (!rawLanes) return defaultLanes;
+
+  // Case 1: Array of lane objects (e.g., [{ lane: "NORTH", count: 5, ... }])
+  if (Array.isArray(rawLanes)) {
+    rawLanes.forEach((item: any) => {
+      if (item) {
+        const laneName = (item.lane || item.laneName || item.id || "") as string;
+        if (laneName) {
+          const laneKey = laneName.toUpperCase() as Lane;
+          if (defaultLanes[laneKey]) {
+            const count = item.count ?? item.vehicle_count ?? item.vehicleCount ?? 0;
+            defaultLanes[laneKey] = {
+              count: count,
+              density: item.density ?? item.densityOccupancy ?? Math.min(100, Math.round(count * 8.5)),
+              light: (item.light?.toUpperCase() || item.status?.toUpperCase() || item.lightState?.toUpperCase() || "RED") as LightState,
+              los: item.los || "—"
+            };
+          }
+        }
+      }
+    });
+    return defaultLanes;
+  }
+
+  // Case 2: Object map (either uppercase keys or lowercase keys)
+  if (typeof rawLanes === "object") {
+    const lanesList: Lane[] = ["NORTH", "SOUTH", "EAST", "WEST"];
+    lanesList.forEach((ln) => {
+      // Check both "NORTH" and "north"
+      const rawLaneData = rawLanes[ln] || rawLanes[ln.toLowerCase()];
+      if (rawLaneData) {
+        const count = rawLaneData.count ?? rawLaneData.vehicle_count ?? rawLaneData.vehicleCount ?? 0;
+        defaultLanes[ln] = {
+          count: count,
+          density: rawLaneData.density ?? rawLaneData.densityOccupancy ?? Math.min(100, Math.round(count * 8.5)),
+          light: (rawLaneData.light?.toUpperCase() || rawLaneData.status?.toUpperCase() || rawLaneData.lightState?.toUpperCase() || "RED") as LightState,
+          los: rawLaneData.los || "—"
+        };
+      }
+    });
+    return defaultLanes;
+  }
+
+  return defaultLanes;
+}
+
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<SidebarTab>("DASHBOARD");
@@ -622,7 +676,7 @@ export default function App() {
           setRemainingSecs(mappedRemainingSecs);
 
           if (localData.lanes) {
-            setLanes(localData.lanes);
+            setLanes(normalizeLanes(localData.lanes));
           } else {
             const counts = localData.vehicle_counts || {};
             const statuses = localData.lane_statuses || {};
@@ -681,7 +735,7 @@ export default function App() {
               setActiveLane(data.activeLane);
               setWeather(data.weather);
               setRemainingSecs(data.remainingSecs);
-              setLanes(data.lanes);
+              setLanes(normalizeLanes(data.lanes));
             } else {
               // Revert back to 0-count offline structure if Python node is not active on Cloud Hub either
               setLanes({
