@@ -259,9 +259,9 @@ export default function AnalyticsTab() {
   // Search and Filter Logic
   const filteredLedgers = useMemo(() => {
     if (!searchTerm) return unifiedLedgers;
-    const term = searchTerm.toLowerCase();
+    const term = (searchTerm || "").toLowerCase();
     return unifiedLedgers.filter(l => 
-      l.filename.toLowerCase().includes(term) || 
+      (l.filename || "").toLowerCase().includes(term) || 
       new Date(l.uploadedAt).toLocaleString().toLowerCase().includes(term)
     );
   }, [unifiedLedgers, searchTerm]);

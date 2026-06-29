@@ -458,8 +458,8 @@ export default function DashboardTab({
               className="relative w-full max-w-6xl aspect-video bg-slate-900 rounded-2xl overflow-hidden border border-white/10 shadow-2xl"
             >
               <img
-                src={`http://${nodeIp}:5000/video_feed/${selectedVideo.lane.toLowerCase()}`}
-                alt={selectedVideo.name}
+                src={`http://${nodeIp}:5000/video_feed/${selectedVideo?.lane?.toLowerCase() || ""}`}
+                alt={selectedVideo?.name || "Video Stream"}
                 className="w-full h-full object-contain"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src =

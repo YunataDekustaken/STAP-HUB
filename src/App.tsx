@@ -224,7 +224,7 @@ export default function App() {
     const unsubAuth = onAuthStateChanged(auth, async (user: any) => {
       if (user) {
         const userEmail = user.email || "";
-        const lowerEmail = userEmail.toLowerCase().trim();
+        const lowerEmail = (userEmail || "").toLowerCase().trim();
         
         // Check registry matches
         const matchedUser = users.find(u => u.email?.toLowerCase()?.trim() === lowerEmail);
@@ -330,7 +330,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
 
-    const matched = users.find(u => u.email?.toLowerCase()?.trim() === currentUser.email?.toLowerCase()?.trim());
+    const matched = users.find(u => u.email?.toLowerCase()?.trim() === currentUser?.email?.toLowerCase()?.trim());
     if (matched) {
       if (currentUser.role !== matched.role || currentUser.name !== matched.name) {
         setCurrentUser(prev => prev ? {

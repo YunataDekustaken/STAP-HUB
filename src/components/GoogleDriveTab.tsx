@@ -55,7 +55,7 @@ export default function GoogleDriveTab() {
   }, []);
 
   const filteredFiles = files.filter(f => 
-    f.name.toLowerCase().includes(searchTerm.toLowerCase())
+    (f.name || "").toLowerCase().includes((searchTerm || "").toLowerCase())
   );
 
   const formatSize = (bytes?: string) => {

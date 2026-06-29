@@ -216,7 +216,7 @@ export default function IncidentReportsTab({ reports, onAddReport, onUpdateRepor
                   </td>
                   <td className="py-4 px-6">
                     <div className="flex flex-col">
-                      <span className="font-bold text-slate-700 capitalize text-[11px]">{rep.lane.toLowerCase()} Corridor</span>
+                      <span className="font-bold text-slate-700 capitalize text-[11px]">{(rep.lane || "").toLowerCase()} Corridor</span>
                       <p className="text-[10px] text-slate-400 font-medium truncate max-w-[150px]">{rep.description}</p>
                     </div>
                   </td>
