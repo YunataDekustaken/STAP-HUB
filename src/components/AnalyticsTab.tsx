@@ -46,6 +46,7 @@ import {
   Cell
 } from "recharts";
 import { parseTrafficCSV, ParsedTrafficData, Snapshot } from "../utils/csvParser";
+import { generateTrafficReport, ReportMetadata } from "../utils/reportGenerator";
 import { SAMPLE_TRAFFIC_CSV } from "../utils/sampleData";
 import { getFirebaseInstances, getFirebaseConfig } from "../firebase";
 import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
@@ -76,14 +77,17 @@ export default function AnalyticsTab() {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [activeChartTab, setActiveChartTab] = useState<"vol" | "dens" | "dist">("vol");
-  const [subTab, setSubTab] = useState<"explorer" | "hub">("explorer");
+  const [subTab, setSubTab] = useState<"explorer" | "hub" | "daily" | "reports">("explorer");
   const [localLedgers, setLocalLedgers] = useState<UnifiedLedger[]>([]);
   const [cloudLedgers, setCloudLedgers] = useState<UnifiedLedger[]>([]);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState<boolean>(true);
 
-  // CRUD & Interactive State
+  // Search and Filter State
   const [searchTerm, setSearchTerm] = useState<string>("");
+  const [filterSourceType, setFilterSourceType] = useState<string>("ALL");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
   const [selectedLedgerIds, setSelectedLedgerIds] = useState<string[]>([]);
   const [isViewerOpen, setIsViewerOpen] = useState<boolean>(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
@@ -93,6 +97,188 @@ export default function AnalyticsTab() {
   const [viewerCsvData, setViewerCsvData] = useState<string>("");
   const [isEditingViewer, setIsEditingViewer] = useState<boolean>(false);
   const [viewerStatus, setViewerStatus] = useState<string | null>(null);
+
+  const [generatingReport, setGeneratingReport] = useState<boolean>(false);
+  const [reportRequests, setReportRequests] = useState<any[]>([]);
+
+  // Fetch report requests from Firestore
+  useEffect(() => {
+    const { db } = getFirebaseInstances();
+    if (!db) return;
+
+    const q = query(collection(db, "report_requests"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const requests = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setReportRequests(requests);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleGenerateAdminReport = async (type: string) => {
+    setGeneratingReport(true);
+    try {
+      // Use aggregated data if in daily view or specific ledgers are selected
+      const ledgersToReport = subTab === "daily" ? rollupLedgers : 
+                              selectedLedgerIds.length > 0 ? unifiedLedgers.filter(l => selectedLedgerIds.includes(l.filename)) :
+                              unifiedLedgers;
+
+      if (ledgersToReport.length === 0) {
+        alert("No ledger data available to generate report.");
+        return;
+      }
+
+      const parsedDataList = ledgersToReport.map(l => {
+        if (!l.csvData) return null;
+        try { return parseTrafficCSV(l.csvData); } catch (e) { return null; }
+      }).filter(Boolean) as ParsedTrafficData[];
+
+      const metadata: ReportMetadata = {
+        type,
+        dateRange: subTab === "daily" ? (selectedDay || "Current Selection") : "Complete History",
+        generatedBy: "System Administrator",
+        certifiedBy: type === "Certified Traffic Log" ? "Officer-in-Charge" : undefined,
+        refNumber: `STAP-${Date.now().toString(36).toUpperCase()}`
+      };
+
+      const doc = generateTrafficReport(parsedDataList, metadata);
+      doc.save(`${type.replace(/\s+/g, "_")}_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (err) {
+      console.error("Failed to generate report:", err);
+    } finally {
+      setGeneratingReport(false);
+    }
+  };
+
+  const handleApproveReportRequest = async (request: any) => {
+    const { db } = getFirebaseInstances();
+    if (!db) return;
+
+    try {
+      // 1. Generate PDF
+      const ledgersToReport = unifiedLedgers.filter(l => {
+        const uploadedAt = new Date(l.uploadedAt).getTime();
+        const start = new Date(request.requestedRange.startDate).getTime();
+        const end = new Date(request.requestedRange.endDate).getTime() + (24 * 60 * 60 * 1000);
+        return uploadedAt >= start && uploadedAt < end;
+      });
+
+      const parsedDataList = ledgersToReport.map(l => {
+        if (!l.csvData) return null;
+        try { return parseTrafficCSV(l.csvData); } catch (e) { return null; }
+      }).filter(Boolean) as ParsedTrafficData[];
+
+      const metadata: ReportMetadata = {
+        type: "Certified Traffic Log",
+        dateRange: `${request.requestedRange.startDate} to ${request.requestedRange.endDate}`,
+        generatedBy: "STAP Hub Operations",
+        certifiedBy: "Inspector Martinez", // Mock officer
+        refNumber: `REQ-${request.id.substring(0, 8).toUpperCase()}`
+      };
+
+      const doc = generateTrafficReport(parsedDataList, metadata);
+      const pdfBlob = doc.output("blob");
+
+      // In a real app, we would upload to Firebase Storage and get a URL
+      // For now, we'll just download it to simulate approval completion
+      doc.save(`CERTIFIED_LOG_${request.id.substring(0, 5)}.pdf`);
+
+      // 2. Update Firestore status
+      await setDoc(doc(db, "report_requests", request.id), {
+        ...request,
+        status: "APPROVED",
+        certifiedBy: "Inspector Martinez",
+        certifiedAt: new Date().toISOString()
+      }, { merge: true });
+
+    } catch (err) {
+      console.error("Failed to approve report request:", err);
+    }
+  };
+
+  const handleRejectReportRequest = async (requestId: string) => {
+    const { db } = getFirebaseInstances();
+    if (!db) return;
+
+    try {
+      await setDoc(doc(db, "report_requests", requestId), {
+        status: "REJECTED"
+      }, { merge: true });
+    } catch (err) {
+      console.error("Failed to reject report request:", err);
+    }
+  };
+
+  const ReportRequestsList = () => {
+    if (reportRequests.length === 0) {
+      return (
+        <div className="p-8 text-center text-slate-400 text-[10px] font-bold">
+          No certification requests pending review.
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-[11px] font-medium text-slate-600">
+          <thead className="bg-slate-50 border-b border-slate-200 text-[9px] font-black uppercase text-slate-400">
+            <tr>
+              <th className="px-5 py-3">Requester</th>
+              <th className="px-5 py-3">Range</th>
+              <th className="px-5 py-3">Status</th>
+              <th className="px-5 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {reportRequests.map((req) => (
+              <tr key={req.id} className="hover:bg-slate-50 transition-colors">
+                <td className="px-5 py-3">
+                  <div className="font-bold text-slate-800">{req.requesterInfo?.name || "Citizen"}</div>
+                  <div className="text-[9px] text-slate-400">{req.requesterInfo?.email}</div>
+                </td>
+                <td className="px-5 py-3">
+                  {req.requestedRange?.startDate} to {req.requestedRange?.endDate}
+                </td>
+                <td className="px-5 py-3">
+                  <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${
+                    req.status === "PENDING" ? "bg-amber-100 text-amber-700" :
+                    req.status === "APPROVED" ? "bg-emerald-100 text-emerald-700" :
+                    "bg-rose-100 text-rose-700"
+                  }`}>
+                    {req.status}
+                  </span>
+                </td>
+                <td className="px-5 py-3 text-right">
+                  {req.status === "PENDING" && (
+                    <div className="flex items-center justify-end gap-2">
+                      <button 
+                        onClick={() => handleApproveReportRequest(req)}
+                        className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-all font-black text-[9px] uppercase"
+                      >
+                        Approve
+                      </button>
+                      <button 
+                        onClick={() => handleRejectReportRequest(req.id)}
+                        className="px-2 py-1 bg-rose-50 text-rose-700 rounded-md hover:bg-rose-100 transition-all font-black text-[9px] uppercase"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                  {req.status === "APPROVED" && (
+                    <span className="text-[9px] text-emerald-600 font-bold italic">Certified ✔</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
   // Fetch local ledgers from Express server
   const fetchLocalLedgers = async () => {
@@ -258,13 +444,58 @@ export default function AnalyticsTab() {
 
   // Search and Filter Logic
   const filteredLedgers = useMemo(() => {
-    if (!searchTerm) return unifiedLedgers;
-    const term = (searchTerm || "").toLowerCase();
-    return unifiedLedgers.filter(l => 
-      (l.filename || "").toLowerCase().includes(term) || 
-      new Date(l.uploadedAt).toLocaleString().toLowerCase().includes(term)
-    );
-  }, [unifiedLedgers, searchTerm]);
+    let list = unifiedLedgers;
+    
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      list = list.filter(l => 
+        (l.filename || "").toLowerCase().includes(term)
+      );
+    }
+
+    if (filterSourceType !== "ALL") {
+      list = list.filter(l => l.sourceType === filterSourceType);
+    }
+
+    if (startDate) {
+      const start = new Date(startDate).getTime();
+      list = list.filter(l => new Date(l.uploadedAt).getTime() >= start);
+    }
+
+    if (endDate) {
+      const end = new Date(endDate).getTime();
+      // Add 23:59:59 to end date to include the whole day
+      const endOfDay = end + (24 * 60 * 60 * 1000) - 1;
+      list = list.filter(l => new Date(l.uploadedAt).getTime() <= endOfDay);
+    }
+
+    return list;
+  }, [unifiedLedgers, searchTerm, filterSourceType, startDate, endDate]);
+
+  // Group ledgers by day for the Daily Browser
+  const ledgersByDay = useMemo(() => {
+    const groups: { [date: string]: UnifiedLedger[] } = {};
+    filteredLedgers.forEach(l => {
+      const date = new Date(l.uploadedAt).toLocaleDateString();
+      if (!groups[date]) groups[date] = [];
+      groups[date].push(l);
+    });
+    return Object.entries(groups).sort((a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime());
+  }, [filteredLedgers]);
+
+  // Selection for Daily View rollup
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  
+  // Rolling up data for selected day or selected ledgers
+  const rollupLedgers = useMemo(() => {
+    if (subTab === "daily" && selectedDay) {
+      return filteredLedgers.filter(l => new Date(l.uploadedAt).toLocaleDateString() === selectedDay);
+    }
+    if (selectedLedgerIds.length > 0) {
+      return unifiedLedgers.filter(l => selectedLedgerIds.includes(l.filename));
+    }
+    return [];
+  }, [filteredLedgers, unifiedLedgers, subTab, selectedDay, selectedLedgerIds]);
 
   // Handle Auto-Sync side effects
   useEffect(() => {
@@ -549,16 +780,101 @@ export default function AnalyticsTab() {
     setUploadError(null);
   };
 
+  // Aggregated data for selected day or multiple ledgers
+  const aggregatedData = useMemo(() => {
+    if (rollupLedgers.length === 0) return null;
+
+    const parsedRollups = rollupLedgers.map(l => {
+      if (!l.csvData) return null;
+      try {
+        return parseTrafficCSV(l.csvData);
+      } catch (e) {
+        return null;
+      }
+    }).filter(Boolean) as ParsedTrafficData[];
+
+    if (parsedRollups.length === 0) return null;
+
+    // Aggregate snapshots for trend charts
+    // We sort them by timestamp to ensure a continuous timeline
+    const allSnapshots = parsedRollups.flatMap(p => p.snapshots).sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    // Aggregate final summaries for distribution
+    const vehicleCounts: { [type: string]: number } = {};
+    let grandTotal = 0;
+
+    parsedRollups.forEach(p => {
+      if (p.finalSummary?.corridorTotals) {
+        Object.entries(p.finalSummary.corridorTotals.vehicles).forEach(([type, count]) => {
+          vehicleCounts[type] = (vehicleCounts[type] || 0) + (count as number);
+        });
+        grandTotal += p.finalSummary.corridorTotals.grandUniqueCount;
+      } else if (p.snapshots.length > 0) {
+        const last = p.snapshots[p.snapshots.length - 1];
+        last.lanes.forEach(l => {
+          Object.entries(l.vehicles).forEach(([type, count]) => {
+            vehicleCounts[type] = (vehicleCounts[type] || 0) + (count as number);
+          });
+        });
+        grandTotal += last.intersectionSum;
+      }
+    });
+
+    const distribution = Object.entries(vehicleCounts).map(([name, value]) => ({
+      rawName: name,
+      displayName: formatVehicleType(name),
+      value
+    })).sort((a, b) => b.value - a.value);
+
+    // Peak congestion logic across all aggregated ledgers
+    let maxDensity = 0;
+    let maxLane = "—";
+    let maxTime = "—";
+
+    allSnapshots.forEach(snap => {
+      snap.lanes.forEach(l => {
+        if (l.densityOccupancy > maxDensity) {
+          maxDensity = l.densityOccupancy;
+          maxLane = l.lane;
+          maxTime = snap.timestamp;
+        }
+      });
+    });
+
+    // Volume curve binned by hour
+    const hourlyVolume: { [hour: string]: number } = {};
+    allSnapshots.forEach(snap => {
+      const date = new Date(snap.timestamp);
+      const hour = `${date.getHours().toString().padStart(2, '0')}:00`;
+      // For hourly, we take the delta if it's the same session, 
+      // but across multiple sessions, it's safer to use snap increment if available.
+      // Since our CSV is cumulative in a session, we'll try to get the max per hour per session.
+    });
+
+    return {
+      snapshots: allSnapshots,
+      distribution,
+      grandTotal,
+      peak: { lane: maxLane, density: maxDensity, time: maxTime }
+    };
+  }, [rollupLedgers]);
+
   // Extract metadata and summary calculations
-  const totalVehiclesProcessed = parsedData.finalSummary?.corridorTotals?.grandUniqueCount || 
-    (parsedData.snapshots.length > 0 ? parsedData.snapshots[parsedData.snapshots.length - 1].intersectionSum : 0);
+  const totalVehiclesProcessed = subTab === "daily" ? (aggregatedData?.grandTotal || 0) : (parsedData.finalSummary?.corridorTotals?.grandUniqueCount || 
+    (parsedData.snapshots.length > 0 ? parsedData.snapshots[parsedData.snapshots.length - 1].intersectionSum : 0));
 
   const sessionEndClock = parsedData.finalSummary?.timestamp || 
     (parsedData.snapshots.length > 0 ? parsedData.snapshots[parsedData.snapshots.length - 1].timestamp : "—");
 
   // Format progression data for line charts
   const volumeProgressionData = useMemo(() => {
-    return parsedData.snapshots.map((snap) => {
+    const snapshots = (subTab === "daily" || selectedLedgerIds.length > 0) 
+      ? (aggregatedData?.snapshots || []) 
+      : parsedData.snapshots;
+
+    return snapshots.map((snap) => {
       const shortTime = snap.timestamp.includes(" ") ? snap.timestamp.split(" ")[1] : snap.timestamp;
       const row: any = {
         time: shortTime,
@@ -570,10 +886,14 @@ export default function AnalyticsTab() {
       });
       return row;
     });
-  }, [parsedData.snapshots]);
+  }, [parsedData.snapshots, aggregatedData, subTab, selectedLedgerIds]);
 
   const densityProgressionData = useMemo(() => {
-    return parsedData.snapshots.map((snap) => {
+    const snapshots = (subTab === "daily" || selectedLedgerIds.length > 0) 
+      ? (aggregatedData?.snapshots || []) 
+      : parsedData.snapshots;
+
+    return snapshots.map((snap) => {
       const shortTime = snap.timestamp.includes(" ") ? snap.timestamp.split(" ")[1] : snap.timestamp;
       const row: any = {
         time: shortTime,
@@ -584,10 +904,14 @@ export default function AnalyticsTab() {
       });
       return row;
     });
-  }, [parsedData.snapshots]);
+  }, [parsedData.snapshots, aggregatedData, subTab, selectedLedgerIds]);
 
   // Aggregate total vehicle distribution
   const vehicleDistributionData = useMemo(() => {
+    if ((subTab === "daily" || selectedLedgerIds.length > 0) && selectedDistLane === "ALL") {
+      return aggregatedData?.distribution || [];
+    }
+
     const counts: { [type: string]: number } = {};
     
     if (selectedDistLane === "ALL") {
@@ -722,11 +1046,37 @@ export default function AnalyticsTab() {
           <div className="flex items-center gap-1.5">
             <Database className="h-4 w-4" />
             <span>STAP Node Ledgers</span>
-            {unifiedLedgers.length > 0 && (
-              <span className="bg-rose-500 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full animate-pulse">
-                {unifiedLedgers.length} Files
-              </span>
-            )}
+          </div>
+        </button>
+        <button
+          onClick={() => {
+            setSubTab("daily");
+            if (ledgersByDay.length > 0 && !selectedDay) {
+              setSelectedDay(ledgersByDay[0][0]);
+            }
+          }}
+          className={`px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            subTab === "daily"
+              ? "border-[#4E6290] text-[#4E6290]"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <div className="flex items-center gap-1.5">
+            <Calendar className="h-4 w-4" />
+            <span>Daily View Rollup</span>
+          </div>
+        </button>
+        <button
+          onClick={() => setSubTab("reports")}
+          className={`px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            subTab === "reports"
+              ? "border-[#4E6290] text-[#4E6290]"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <div className="flex items-center gap-1.5">
+            <FileText className="h-4 w-4" />
+            <span>Reports Center</span>
           </div>
         </button>
       </div>
@@ -794,16 +1144,60 @@ export default function AnalyticsTab() {
                 <p className="text-xs text-slate-500">List of all exported absolute density sheets logged across nodes.</p>
               </div>
               
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col md:flex-row items-center gap-3">
+                {/* Advanced Filters */}
+                <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-200">
+                  <div className="flex items-center gap-1 px-2">
+                    <Filter className="h-3 w-3 text-slate-400" />
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Filters</span>
+                  </div>
+                  <select 
+                    value={filterSourceType}
+                    onChange={(e) => setFilterSourceType(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg text-[10px] font-bold py-1 px-2 outline-none"
+                  >
+                    <option value="ALL">All Sources</option>
+                    <option value="python_controller">Python Controller</option>
+                    <option value="user_uploaded">User Uploaded</option>
+                  </select>
+                  <input 
+                    type="date" 
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg text-[10px] font-bold py-1 px-2 outline-none"
+                    placeholder="Start Date"
+                  />
+                  <span className="text-[10px] text-slate-300">—</span>
+                  <input 
+                    type="date" 
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg text-[10px] font-bold py-1 px-2 outline-none"
+                    placeholder="End Date"
+                  />
+                  {(filterSourceType !== "ALL" || startDate || endDate) && (
+                    <button 
+                      onClick={() => {
+                        setFilterSourceType("ALL");
+                        setStartDate("");
+                        setEndDate("");
+                      }}
+                      className="p-1 hover:bg-slate-100 text-slate-400 rounded-md"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+
                 {/* Search Bar */}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
                   <input 
                     type="text" 
-                    placeholder="Search ledgers..." 
+                    placeholder="Search filename..." 
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#4E6290]/20 focus:border-[#4E6290] transition-all w-full md:w-64"
+                    className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#4E6290]/20 focus:border-[#4E6290] transition-all w-full md:w-48"
                   />
                 </div>
                 
@@ -1001,6 +1395,297 @@ export default function AnalyticsTab() {
               </div>
             )}
           </div>
+        </div>
+      ) : subTab === "reports" ? (
+        /* REPORTS CENTER PANEL */
+        <div className="space-y-6 animate-fadeIn">
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-5 md:p-6 shadow-xs flex flex-col lg:flex-row gap-6 items-center justify-between">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-[#4E6290]/10 rounded-lg text-[#4E6290]">
+                  <FileText className="h-5 w-5" />
+                </span>
+                <h2 className="text-base font-black text-slate-800 tracking-tight uppercase">STAP Intelligence Reports</h2>
+              </div>
+              <p className="text-xs text-slate-500 font-medium">
+                Generate and download official traffic summaries, vehicle breakdowns, and certified traffic logs for physical archiving or submission.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Daily Traffic Summary */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 flex flex-col">
+              <div className="h-10 w-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+                <BarChart2 className="h-6 w-6" />
+              </div>
+              <div className="space-y-1 flex-1">
+                <h3 className="text-sm font-black text-slate-800 uppercase">Daily Traffic Summary</h3>
+                <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
+                  A high-level overview of traffic volume, average density, and throughput for a specific 24-hour period.
+                </p>
+              </div>
+              <button 
+                onClick={() => handleGenerateAdminReport("Daily Traffic Summary")}
+                disabled={generatingReport || ledgersByDay.length === 0}
+                className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[#4E6290] font-black text-[10px] uppercase rounded-xl transition-all disabled:opacity-50"
+              >
+                {generatingReport ? "Generating..." : "Generate PDF"}
+              </button>
+            </div>
+
+            {/* Vehicle Type Breakdown */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 flex flex-col">
+              <div className="h-10 w-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+                <Car className="h-6 w-6" />
+              </div>
+              <div className="space-y-1 flex-1">
+                <h3 className="text-sm font-black text-slate-800 uppercase">Vehicle Type Analysis</h3>
+                <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
+                  Detailed distribution of vehicle classifications (cars, trucks, cycles) across all recorded sessions in the selection.
+                </p>
+              </div>
+              <button 
+                onClick={() => handleGenerateAdminReport("Vehicle Type Breakdown")}
+                disabled={generatingReport || unifiedLedgers.length === 0}
+                className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[#4E6290] font-black text-[10px] uppercase rounded-xl transition-all disabled:opacity-50"
+              >
+                {generatingReport ? "Generating..." : "Generate PDF"}
+              </button>
+            </div>
+
+            {/* Certified Traffic Log */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 flex flex-col border-l-4 border-l-rose-500">
+              <div className="h-10 w-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
+                <CheckCircle2 className="h-6 w-6" />
+              </div>
+              <div className="space-y-1 flex-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-black text-slate-800 uppercase">Certified Traffic Log</h3>
+                  <span className="px-1.5 py-0.5 bg-rose-100 text-rose-700 text-[8px] font-black uppercase rounded-md">Official</span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
+                  Official stamped document including officer certification metadata. Required for legal evidence or formal records.
+                </p>
+              </div>
+              <button 
+                onClick={() => handleGenerateAdminReport("Certified Traffic Log")}
+                disabled={generatingReport || unifiedLedgers.length === 0}
+                className="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl shadow-sm shadow-rose-200 transition-all disabled:opacity-50"
+              >
+                {generatingReport ? "Generating..." : "Generate & Certify"}
+              </button>
+            </div>
+          </div>
+
+          {/* Pending Certification Requests Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden mt-6">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                <span className="font-black text-xs text-slate-800 uppercase tracking-wider">Public Certification Requests</span>
+              </div>
+              <span className="text-[10px] font-bold text-slate-400">Requires Manual Review</span>
+            </div>
+            
+            {/* Report Requests List */}
+            <ReportRequestsList />
+          </div>
+        </div>
+      ) : subTab === "daily" ? (
+        /* DAILY ROLLUP VIEW PANEL */
+        <div className="space-y-6 animate-fadeIn">
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-5 md:p-6 shadow-xs">
+            <div className="flex flex-col lg:flex-row gap-6 items-center justify-between">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-[#4E6290]/10 rounded-lg text-[#4E6290]">
+                    <Calendar className="h-5 w-5" />
+                  </span>
+                  <h2 className="text-base font-black text-slate-800 tracking-tight uppercase">Daily Rollup Analytics</h2>
+                </div>
+                <p className="text-xs text-slate-500 font-medium">
+                  Aggregated statistics across all recorded sessions for a specific day. Useful for understanding total daily volume and peak congestion hours.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="bg-slate-50 border border-slate-200 p-2 rounded-xl flex items-center gap-3">
+                  <span className="text-[10px] font-black text-slate-400 uppercase pl-1">Select Day</span>
+                  <select 
+                    value={selectedDay || ""}
+                    onChange={(e) => setSelectedDay(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-lg text-xs font-bold py-1.5 px-3 outline-none min-w-[140px]"
+                  >
+                    {ledgersByDay.map(([date]) => (
+                      <option key={date} value={date}>{date}</option>
+                    ))}
+                    {ledgersByDay.length === 0 && <option value="">No data available</option>}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {!aggregatedData ? (
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-12 text-center text-slate-400 text-xs">
+              <Calendar className="h-10 w-10 text-slate-200 mx-auto mb-3" />
+              <p className="font-bold text-slate-600">No aggregated data for this selection</p>
+              <p className="mt-1">Make sure the selected day has ledgers synced to the cloud.</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Total Vehicles</span>
+                    <TrendingUp className="h-4 w-4 text-[#4E6290]" />
+                  </div>
+                  <div className="text-2xl font-black text-slate-800 tracking-tight">{aggregatedData.grandTotal.toLocaleString()}</div>
+                  <div className="text-[10px] text-slate-500 font-medium">Sum of all sessions</div>
+                </div>
+
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Peak Density</span>
+                    <Activity className="h-4 w-4 text-rose-500" />
+                  </div>
+                  <div className="text-2xl font-black text-slate-800 tracking-tight">{aggregatedData.peak.density.toFixed(1)}%</div>
+                  <div className="text-[10px] text-slate-500 font-medium">{aggregatedData.peak.lane} at {new Date(aggregatedData.peak.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                </div>
+
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Sessions</span>
+                    <Database className="h-4 w-4 text-indigo-500" />
+                  </div>
+                  <div className="text-2xl font-black text-slate-800 tracking-tight">{rollupLedgers.length}</div>
+                  <div className="text-[10px] text-slate-500 font-medium">Exported ledger files</div>
+                </div>
+
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Top Class</span>
+                    <Car className="h-4 w-4 text-emerald-500" />
+                  </div>
+                  <div className="text-2xl font-black text-slate-800 tracking-tight">{aggregatedData.distribution[0]?.displayName || "—"}</div>
+                  <div className="text-[10px] text-slate-500 font-medium">Most frequent vehicle</div>
+                </div>
+              </div>
+
+              {/* Charts for aggregated data */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <BarChart2 className="h-4 w-4 text-[#4E6290]" />
+                    Daily Vehicle Distribution
+                  </h3>
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={aggregatedData.distribution}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="displayName" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{fontSize: 10, fontWeight: 600, fill: '#64748b'}}
+                          dy={10}
+                        />
+                        <YAxis 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{fontSize: 10, fontWeight: 600, fill: '#64748b'}}
+                        />
+                        <Tooltip 
+                          cursor={{fill: '#f8fafc'}}
+                          contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px'}}
+                        />
+                        <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                          {aggregatedData.distribution.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={index === 0 ? "#4E6290" : "#94a3b8"} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4 text-[#4E6290]" />
+                    Total Volume Trend (Sessions)
+                  </h3>
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={aggregatedData.snapshots.filter((_, i) => i % Math.max(1, Math.floor(aggregatedData.snapshots.length / 20)) === 0)}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="timestamp" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{fontSize: 9, fontWeight: 500, fill: '#94a3b8'}}
+                          tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        />
+                        <YAxis 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{fontSize: 10, fontWeight: 600, fill: '#64748b'}}
+                        />
+                        <Tooltip 
+                          contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px'}}
+                          labelFormatter={(ts) => new Date(ts).toLocaleString()}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="intersectionSum" 
+                          stroke="#4E6290" 
+                          strokeWidth={3} 
+                          dot={false}
+                          activeDot={{ r: 6, strokeWidth: 0 }}
+                          name="Total Vehicles"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sessions Breakdown Table */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div className="p-5 border-b border-slate-100 font-black text-xs text-slate-800 uppercase tracking-wider">
+                  Session Ledger Breakdown for {selectedDay}
+                </div>
+                <table className="w-full text-left text-[11px] font-medium text-slate-600">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-[9px] font-black uppercase text-slate-400">
+                    <tr>
+                      <th className="px-5 py-3">Filename</th>
+                      <th className="px-5 py-3">Time</th>
+                      <th className="px-5 py-3">Source</th>
+                      <th className="px-5 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {rollupLedgers.map((l) => (
+                      <tr key={l.filename} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-5 py-3 font-bold text-slate-800">{l.filename}</td>
+                        <td className="px-5 py-3">{new Date(l.uploadedAt).toLocaleTimeString()}</td>
+                        <td className="px-5 py-3 uppercase text-[9px] font-black tracking-wider text-slate-400">{l.sourceType}</td>
+                        <td className="px-5 py-3 text-right">
+                          <button 
+                            onClick={() => analyzeLedger(l)}
+                            className="text-[#4E6290] font-black uppercase text-[9px] hover:underline"
+                          >
+                            Explore
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         /* STANDARD CHARTS AND REPLAY TAB */

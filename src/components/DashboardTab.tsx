@@ -33,7 +33,8 @@ function RegionalWeather({ location: propLocation }: { location?: string }) {
     const fetchWeather = async () => {
       setLoading(true);
       try {
-        const res = await fetch("/api/weather/forecast");
+        const queryParams = propLocation ? `?location=${encodeURIComponent(propLocation)}` : "";
+        const res = await fetch(`/api/weather/forecast${queryParams}`);
         const data = await res.json();
         if (data.success) {
           setWeatherData(data.data);

@@ -82,6 +82,23 @@
         "role": { "type": "string", "enum": ["Administrator", "Traffic Commissioner", "Operations Analyst", "Inspector"] }
       },
       "required": ["name", "email", "role"]
+    },
+    "ReportRequest": {
+      "title": "Report Request",
+      "description": "Public requests for certified traffic reports",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "requestedRange": { "type": "object" },
+        "requesterInfo": { "type": "object" },
+        "status": { "type": "string", "enum": ["PENDING", "ONGOING", "APPROVED", "REJECTED"] },
+        "generatedPdfUrl": { "type": "string" },
+        "certifiedBy": { "type": "string" },
+        "certifiedAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["type", "requestedRange", "requesterInfo", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -92,6 +109,10 @@
     "footage_requests": {
       "schema": "FootageRequest",
       "description": "Citizen requests for CCTV logs"
+    },
+    "report_requests": {
+      "schema": "ReportRequest",
+      "description": "Requests for certified traffic reports and certificates"
     },
     "incident_reports": {
       "schema": "IncidentReport",

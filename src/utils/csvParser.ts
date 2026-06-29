@@ -92,7 +92,7 @@ export function parseTrafficCSV(csvText: string): ParsedTrafficData {
         // Headers look like: Lane Approach, ambulance, ..., Cumulative Total, Live Area Density Occupancy %
         const vehicleTypes: string[] = [];
         // Flexible detection: identify where vehicle columns start and end
-        const cumulativeTotalIdx = headers.findIndex(h => h.toLowerCase().includes("cumulative total"));
+        const cumulativeTotalIdx = headers.findIndex(h => h && h.toLowerCase().includes("cumulative total"));
         
         if (cumulativeTotalIdx > 1) {
           for (let h = 1; h < cumulativeTotalIdx; h++) {
@@ -185,7 +185,7 @@ export function parseTrafficCSV(csvText: string): ParsedTrafficData {
         const headers = headerLine.split(",");
         
         const vehicleTypes: string[] = [];
-        const absoluteCountIdx = headers.findIndex(h => h.toLowerCase().includes("absolute") || h.toLowerCase().includes("grand unique"));
+        const absoluteCountIdx = headers.findIndex(h => h && (h.toLowerCase().includes("absolute") || h.toLowerCase().includes("grand unique")));
         
         if (absoluteCountIdx > 1) {
           for (let h = 1; h < absoluteCountIdx; h++) {

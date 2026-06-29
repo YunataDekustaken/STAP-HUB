@@ -8,7 +8,7 @@ import IncidentReportsTab, { IncidentReport } from "./components/IncidentReports
 import AnnouncementsTab, { Announcement } from "./components/AnnouncementsTab";
 import AnalyticsTab from "./components/AnalyticsTab";
 import GoogleDriveTab from "./components/GoogleDriveTab";
-import PublicDataRequest from "./components/PublicDataRequest";
+import PublicDataRequest, { ReportRequestSubmission } from "./components/PublicDataRequest";
 import PublicIncidentReport from "./components/PublicIncidentReport";
 import SettingsTab from "./components/SettingsTab";
 import { Lane, LightState, SystemMode, User } from "./types";
@@ -505,9 +505,17 @@ export default function App() {
       // 1. Prioritize querying local Python controller directly if nodeIp is set
       if (nodeIp && nodeIp.trim()) {
         try {
-          const controllerUrl = `http://${nodeIp.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
+          const isHttps = window.location.protocol === "https:";
+          let controllerUrl = `http://${nodeIp.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
           
-          const controllerFetch = fetch(controllerUrl, { mode: "cors" });
+          // If we are on HTTPS, we must use the server-side proxy to avoid Mixed Content errors
+          if (isHttps) {
+            controllerUrl = `/api/v1/proxy-python-status?url=${encodeURIComponent(controllerUrl)}`;
+          }
+          
+          const controllerFetch = fetch(controllerUrl, { 
+            mode: isHttps ? "same-origin" : "cors" 
+          });
           const timeoutPromise = new Promise<Response>((_, reject) =>
             setTimeout(() => reject(new Error("Local fetch timeout")), 1200)
           );
@@ -758,6 +766,22 @@ export default function App() {
       }
     } else {
       setAnnouncements((prev) => prev.filter((ann) => ann.id !== id));
+    }
+  };
+
+  // Handle public report request additions
+  const handleAddReportRequestPublic = async (newReq: ReportRequestSubmission) => {
+    const { db } = getFirebaseInstances();
+    if (!db) return;
+
+    try {
+      await addDoc(collection(db, "report_requests"), {
+        ...newReq,
+        status: "PENDING",
+        createdAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Failed to submit report request:", err);
     }
   };
 
@@ -1112,6 +1136,7 @@ export default function App() {
               <PublicDataRequest
                 requests={footageRequests}
                 onSubmitRequest={handleAddFootageRequestPublic}
+                onSubmitReportRequest={handleAddReportRequestPublic}
               />
             )}
 

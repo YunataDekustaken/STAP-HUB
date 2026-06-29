@@ -1,16 +1,30 @@
 import React, { useState } from "react";
-import { FileText, Send, CheckCircle, Search, Clock, Calendar, ShieldAlert } from "lucide-react";
+import { FileText, Send, CheckCircle, Search, Clock, Calendar, ShieldAlert, Check } from "lucide-react";
 import { FootageRequest } from "./FootageRequestsTab";
+
+export interface ReportRequestSubmission {
+  type: string;
+  requestedRange: { startDate: string; endDate: string };
+  requesterInfo: {
+    name: string;
+    email: string;
+    organization: string;
+    contact: string;
+    address: string;
+  };
+}
 
 interface PublicDataRequestProps {
   requests: FootageRequest[];
   onSubmitRequest: (newReq: Omit<FootageRequest, "id" | "dateSubmitted" | "status" | "handledBy">) => void;
+  onSubmitReportRequest: (newReq: ReportRequestSubmission) => void;
 }
 
-export default function PublicDataRequest({ requests, onSubmitRequest }: PublicDataRequestProps) {
-  // Mode: "FORM" | "SUCCESS" | "TRACK"
-  const [activeView, setActiveView] = useState<"FORM" | "TRACK">("FORM");
+export default function PublicDataRequest({ requests, onSubmitRequest, onSubmitReportRequest }: PublicDataRequestProps) {
+  // Mode: "FORM" | "TRACK" | "REPORT_FORM"
+  const [activeView, setActiveView] = useState<"FORM" | "TRACK" | "REPORT_FORM">("FORM");
   const [successId, setSuccessId] = useState<string | null>(null);
+  const [reportSuccess, setReportSuccess] = useState<boolean>(false);
 
   // Form Fields State
   const [fullName, setFullName] = useState("");
@@ -114,6 +128,7 @@ export default function PublicDataRequest({ requests, onSubmitRequest }: PublicD
               setSearched(false);
               setTrackResult(null);
               setSearchQuery("");
+              setReportSuccess(false);
             }}
             className={`pb-4 text-xs font-bold tracking-wider uppercase transition-all ${
               activeView === "TRACK"
@@ -123,8 +138,165 @@ export default function PublicDataRequest({ requests, onSubmitRequest }: PublicD
           >
             TRACK STATUS
           </button>
+          <button
+            onClick={() => {
+              setActiveView("REPORT_FORM");
+              setSuccessId(null);
+              setReportSuccess(false);
+            }}
+            className={`pb-4 text-xs font-bold tracking-wider uppercase transition-all ${
+              activeView === "REPORT_FORM"
+                ? "border-b-2 border-slate-900 text-slate-900"
+                : "text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            REQUEST CERTIFIED REPORT
+          </button>
         </div>
       </div>
+
+      {activeView === "REPORT_FORM" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
+          <div className="lg:col-span-2 space-y-6">
+            {reportSuccess && (
+              <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-2xl flex items-start gap-4 shadow-sm">
+                <CheckCircle className="h-8 w-8 text-emerald-500 shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <h4 className="text-sm font-bold text-emerald-800">Certification Request Submitted!</h4>
+                  <p className="text-xs text-emerald-700 leading-relaxed">
+                    Your petition for a <strong>Certified Traffic Log</strong> has been received. Our operations team will verify the traffic ledger data for your requested period and dispatch the certified PDF to your email upon approval.
+                  </p>
+                  <button
+                    onClick={() => setReportSuccess(false)}
+                    className="text-xs font-bold text-emerald-800 underline hover:text-emerald-900 pt-1"
+                  >
+                    File another request
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-50 text-rose-700 rounded-xl">
+                  <CheckCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800 uppercase tracking-tight">Petition for Certified Traffic Records</h3>
+                  <p className="text-xs text-slate-500 font-medium">Official request for stamped and signed traffic analytics ledgers</p>
+                </div>
+              </div>
+
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  onSubmitReportRequest({
+                    type: "Certified Traffic Log",
+                    requestedRange: { startDate: footageDateStart, endDate: footageDateEnd || footageDateStart },
+                    requesterInfo: {
+                      name: fullName,
+                      email,
+                      organization: organization || "Personal",
+                      contact,
+                      address
+                    }
+                  });
+                  setReportSuccess(true);
+                  // Reset fields
+                  setFullName("");
+                  setEmail("");
+                  setFootageDateStart("");
+                  setFootageDateEnd("");
+                }} 
+                className="space-y-5"
+              >
+                <div className="space-y-4">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block border-b border-slate-100 pb-1">
+                    APPLICANT & DATA RANGE
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600 block">FULL NAME *</label>
+                      <input
+                        type="text"
+                        required
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:border-slate-400 focus:bg-white"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600 block">EMAIL ADDRESS *</label>
+                      <input
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:border-slate-400 focus:bg-white"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600 block">START DATE *</label>
+                      <input
+                        type="date"
+                        required
+                        value={footageDateStart}
+                        onChange={(e) => setFootageDateStart(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:border-slate-400 focus:bg-white"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600 block">END DATE *</label>
+                      <input
+                        type="date"
+                        required
+                        value={footageDateEnd}
+                        onChange={(e) => setFootageDateEnd(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 outline-none focus:border-slate-400 focus:bg-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-6 py-3 rounded-xl transition-all active:scale-95 flex items-center gap-2 shadow-sm cursor-pointer"
+                  >
+                    <Send className="h-4 w-4" />
+                    <span>Request Official Certification</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-4">
+              <h4 className="text-xs font-black uppercase tracking-widest text-rose-400">What is a Certified Log?</h4>
+              <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                A Certified Traffic Log is a legally-defensible document generated by STAP Hub and digitally signed by an on-duty Traffic Operations Officer. It includes:
+              </p>
+              <ul className="text-[10px] space-y-2 text-slate-300">
+                <li className="flex items-center gap-2">
+                  <Check className="h-3 w-3 text-emerald-500" />
+                  <span>Verified session-by-session volume data</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="h-3 w-3 text-emerald-500" />
+                  <span>Officer Certification Metadata & Ref No.</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="h-3 w-3 text-emerald-500" />
+                  <span>Official STAP Hub Departmental Stamp</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeView === "FORM" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

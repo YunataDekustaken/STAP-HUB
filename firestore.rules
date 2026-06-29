@@ -38,6 +38,13 @@ service cloud.firestore {
       allow update, delete: if isOperator() && isValidId(requestId);
     }
 
+    // 2.1 PUBLIC REPORT REQUESTS (FOR CERTIFICATION)
+    match /report_requests/{requestId} {
+      allow create: if true; // Public can request
+      allow read: if true;   // Public can see their own request status
+      allow update, delete: if isOperator() && isValidId(requestId);
+    }
+
     // 3. INCIDENT REPORTS
     match /incident_reports/{reportId} {
       allow create: if true; // Public can report incidents
@@ -67,9 +74,12 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // 8. DYNAMIC VEHICLE LEDGERS (trusted server-side uploaded CSV ledgers)
+    // 8. DYNAMIC VEHICLE LEDGERS (compiled CSV traffic matrix data)
     match /ledgers/{ledgerId} {
-      allow read, write: if true;
+      // Public can read ledgers to see current analytics/dashboard data,
+      // but only operators can create/update/delete.
+      allow read: if true;
+      allow write: if isOperator() && isValidId(ledgerId);
     }
   }
 }

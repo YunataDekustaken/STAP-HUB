@@ -310,6 +310,8 @@ export default function SettingsTab({
     setWeather(newWeather);
     setWeatherSuccess("");
     setWeatherError("");
+    setSuccessMessage("");
+    setErrorMessage("");
     try {
       await fetch("/api/v1/control", {
         method: "POST",
@@ -337,7 +339,9 @@ export default function SettingsTab({
       });
       const data = await res.json();
       if (data.success) {
-        setWeatherSuccess(`Regional forecast location updated to "${weatherApiLoc}" successfully.`);
+        setWeatherSuccess(`Regional forecast source updated to "${weatherApiLoc}" successfully.`);
+        // Also update the local weather location to stay in sync
+        onUpdateWeatherLocation(weatherApiLoc);
       } else {
         throw new Error(data.error);
       }
@@ -579,6 +583,7 @@ export default function SettingsTab({
                         if (val !== "CUSTOM") {
                           setCustomLocationInput(val);
                           onUpdateWeatherLocation(val);
+                          setWeatherApiLoc(val);
                           setWeatherSuccess(`Weather location updated to "${val}" successfully.`);
                         }
                       }}
@@ -612,6 +617,7 @@ export default function SettingsTab({
                               setSuccessMessage("");
                               setErrorMessage("");
                               onUpdateWeatherLocation(customLocationInput.trim());
+                              setWeatherApiLoc(customLocationInput.trim());
                               setWeatherSuccess(`Geographical reference bound to custom location: "${customLocationInput.trim()}"`);
                             }}
                             className="bg-slate-850 hover:bg-slate-700 text-white font-bold text-xs px-3 py-2 rounded-lg transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
