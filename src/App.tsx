@@ -263,6 +263,9 @@ async function dispatchControlToNode(nodeIp: string, path: string, body: any) {
 }
 
 export default function App() {
+  // Routing
+  const [pathname, setPathname] = useState(window.location.pathname);
+  
   // Navigation
   const [activeTab, setActiveTab] = useState<SidebarTab>("DASHBOARD");
 
@@ -1068,6 +1071,29 @@ export default function App() {
         return "STAP Hub";
     }
   };
+
+  useEffect(() => {
+    const handleLocationChange = () => setPathname(window.location.pathname);
+    window.addEventListener('popstate', handleLocationChange);
+    // Simple path monitoring for non-popstate changes
+    const interval = setInterval(() => {
+      if (window.location.pathname !== pathname) {
+        setPathname(window.location.pathname);
+      }
+    }, 1000);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      clearInterval(interval);
+    };
+  }, [pathname]);
+
+  // Standalone Legal Pages for Google Verification
+  if (pathname === "/privacy-policy") {
+    return <div className="min-h-screen bg-slate-50 overflow-auto"><LegalTab standalone defaultSection="PRIVACY" /></div>;
+  }
+  if (pathname === "/terms-of-service") {
+    return <div className="min-h-screen bg-slate-50 overflow-auto"><LegalTab standalone defaultSection="TERMS" /></div>;
+  }
 
   return (
     <div className="flex h-screen w-screen bg-[#EBF0F6] text-slate-800 overflow-hidden font-sans">

@@ -91,9 +91,12 @@ STAP Hub communicates with physical smart poles via a hybrid cloud-to-local brid
   - **Description**: Exchanges authorization code for access/refresh tokens.
 
 ## ⚖️ Compliance & Legal
-The application includes a built-in **Legal & Compliance Center** (`/LEGAL`) which hosts the:
-- **Privacy Policy**: Details on CCTV data retention and Google API usage.
-- **Terms of Service**: Governance for administrative access and data extraction.
+The application includes standalone routes for official verification:
+- **Privacy Policy**: [stap-hub.vercel.app/privacy-policy](/privacy-policy)
+- **Terms of Service**: [stap-hub.vercel.app/terms-of-service](/terms-of-service)
+
+These pages are accessible without authentication to meet Google Cloud Console requirements.
+The built-in **Legal & Compliance Center** is also available within the admin dashboard.
 
 ---
 *Maintained by the STAP Development Team. v17.2 Live Control.*
