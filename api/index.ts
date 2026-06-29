@@ -144,9 +144,32 @@ app.get("/api/auth/google/status", async (req: Request, res: Response) => {
 
 // --- API ROUTE: Weather Configuration & Data ---
 app.get("/api/weather/config", async (req: Request, res: Response) => {
-  // Use public Firestore REST if needed, but for simplicity we return defaults or use env
-  // In a real Vercel deploy, we'd fetch from Firestore via SDK or REST
-  res.json({ success: true, location: process.env.WEATHER_LOCATION || "Marikina City" });
+  try {
+    const snap = await firestoreREST("GET", "system/weather_config");
+    if (snap && snap.fields?.location?.stringValue) {
+      return res.json({ success: true, location: snap.fields.location.stringValue });
+    }
+    res.json({ success: true, location: process.env.WEATHER_LOCATION || "Marikina City" });
+  } catch (err: any) {
+    res.json({ success: true, location: process.env.WEATHER_LOCATION || "Marikina City" });
+  }
+});
+
+app.post("/api/weather/config", async (req: Request, res: Response) => {
+  try {
+    const { location } = req.body;
+    if (!location) return res.status(400).json({ success: false, error: "Missing location" });
+    
+    await firestoreREST("PATCH", "system/weather_config", {
+      fields: {
+        location: { stringValue: location },
+        updatedAt: { stringValue: new Date().toISOString() }
+      }
+    });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.get("/api/weather/forecast", async (req: Request, res: Response) => {

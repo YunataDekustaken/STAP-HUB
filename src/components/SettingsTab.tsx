@@ -222,12 +222,15 @@ export default function SettingsTab({
     setIsConnecting(true);
     setSuccessMessage("");
     setErrorMessage("");
+    setWeatherSuccess("");
+    setWeatherError("");
     setNodeIp(inputValue);
     
     try {
       // 1. Check direct reachability to local Python Flask endpoint
       const controllerUrl = `http://${inputValue.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
       
+      // Use a short timeout for direct IP check to avoid long hangs on Mixed Content blocked requests
       const pingPromise = fetch(controllerUrl, { mode: "cors" });
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error("Timeout")), 1500)
@@ -324,6 +327,8 @@ export default function SettingsTab({
     setIsSavingWeatherApi(true);
     setWeatherSuccess("");
     setWeatherError("");
+    setSuccessMessage("");
+    setErrorMessage("");
     try {
       const res = await fetch("/api/weather/config", {
         method: "POST",
@@ -569,6 +574,8 @@ export default function SettingsTab({
                         setPresetLocation(val);
                         setWeatherSuccess("");
                         setWeatherError("");
+                        setSuccessMessage("");
+                        setErrorMessage("");
                         if (val !== "CUSTOM") {
                           setCustomLocationInput(val);
                           onUpdateWeatherLocation(val);
@@ -602,6 +609,8 @@ export default function SettingsTab({
                             onClick={() => {
                               setWeatherSuccess("");
                               setWeatherError("");
+                              setSuccessMessage("");
+                              setErrorMessage("");
                               onUpdateWeatherLocation(customLocationInput.trim());
                               setWeatherSuccess(`Geographical reference bound to custom location: "${customLocationInput.trim()}"`);
                             }}
