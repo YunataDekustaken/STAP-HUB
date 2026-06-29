@@ -111,18 +111,13 @@ app.get("/api/v1/proxy-python-status", async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, error: "Only status endpoint proxying is permitted." });
     }
 
-    const response = await fetch(targetUrl, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(targetUrl, { signal: AbortSignal.timeout(3000) });
     if (!response.ok) throw new Error(`Target returned ${response.status}`);
     
     const data = await response.json();
     res.json(data);
   } catch (err: any) {
-    const isPrivateIp = targetUrl.includes("192.168.") || targetUrl.includes("10.") || targetUrl.includes("172.");
-    const errorMessage = isPrivateIp 
-      ? `Proxy failed: ${err.message}. Note: Private IPs (like ${targetUrl.split('/')[2]}) are not reachable from the cloud server. Please use a public URL or tunnel (e.g., ngrok).`
-      : `Proxy failed: ${err.message}`;
-    
-    res.status(502).json({ success: false, error: errorMessage });
+    res.status(502).json({ success: false, error: `Proxy failed: ${err.message}` });
   }
 });
 

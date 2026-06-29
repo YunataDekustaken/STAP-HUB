@@ -581,20 +581,10 @@ export default function App() {
             }
 
             dataFetched = true;
-          } else {
-            // Handle proxy or direct failure (e.g. 502)
-            if (localRes.status === 502) {
-              const errData = await localRes.json().catch(() => ({}));
-              console.debug("STAP Proxy offline:", errData.error || "502 Gateway Error");
-            }
-            setIsNodeConnected(false);
           }
         } catch (localErr) {
           // Fall back gracefully to cloud check if we cannot reach local IP
-          if (isNodeConnected) {
-            console.debug("STAP Node direct connection failed, falling back to cloud proxy...");
-          }
-          setIsNodeConnected(false);
+          // Silencing debug logs as per user request to avoid notification clutter
         }
       }
 
