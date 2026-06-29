@@ -188,6 +188,78 @@ function normalizeLanes(rawLanes: any): Record<Lane, { count: number; density: n
   return defaultLanes;
 }
 
+function isPrivateAddress(ip: string): boolean {
+  const trimmedIp = ip.trim().toLowerCase();
+  if (
+    trimmedIp === "localhost" || 
+    trimmedIp === "127.0.0.1" || 
+    trimmedIp.startsWith("192.168.") || 
+    trimmedIp.startsWith("10.")
+  ) {
+    return true;
+  }
+  if (trimmedIp.startsWith("172.")) {
+    const parts = trimmedIp.split(".");
+    if (parts.length >= 2) {
+      const secondOctet = parseInt(parts[1], 10);
+      return secondOctet >= 16 && secondOctet <= 31;
+    }
+  }
+  return false;
+}
+
+async function dispatchControlToNode(nodeIp: string, path: string, body: any) {
+  if (!nodeIp || !nodeIp.trim()) return;
+
+  const targetUrl = `http://${nodeIp.trim()}:5000${path}`;
+  const isHttps = window.location.protocol === "https:";
+  const isPrivate = isPrivateAddress(nodeIp);
+
+  // 1. Always attempt a DIRECT fetch first (great for localhost/127.0.0.1 under HTTPS, and all cases under HTTP)
+  try {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 1200); // 1.2 second timeout for local network responses
+    const response = await fetch(targetUrl, {
+      method: "POST",
+      mode: "cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    clearTimeout(id);
+    if (response.ok) {
+      console.log(`Direct control dispatched successfully to ${targetUrl}`);
+      return;
+    }
+  } catch (e) {
+    console.debug(`Direct dispatch to local node failed or was blocked: ${e}`);
+  }
+
+  // 2. Fall back to cloud proxy ONLY if we are on HTTPS and it is NOT a private local address
+  // (because cloud proxies CANNOT route to private LAN IPs, avoiding slow, useless 502/timeouts on Vercel)
+  if (isHttps && !isPrivate) {
+    try {
+      const response = await fetch("/api/v1/proxy-python-control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetUrl,
+          body
+        })
+      });
+      if (response.ok) {
+        console.log(`Cloud proxy dispatch succeeded for ${targetUrl}`);
+      } else {
+        console.warn(`Cloud proxy dispatch returned status: ${response.status}`);
+      }
+    } catch (e) {
+      console.warn("Cloud proxy dispatch failed entirely:", e);
+    }
+  } else {
+    console.info("Skipping cloud proxy for local private address.");
+  }
+}
+
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<SidebarTab>("DASHBOARD");
@@ -1216,31 +1288,8 @@ export default function App() {
 
                   // 2. Dispatch REST command to physical local Python node
                   if (nodeIp) {
-                    try {
-                      const pythonMode = m?.toLowerCase() || "auto";
-                      const isHttps = window.location.protocol === "https:";
-                      const targetUrl = `http://${nodeIp.trim()}:5000/control/mode`;
-                      
-                      if (isHttps) {
-                        await fetch("/api/v1/proxy-python-control", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            targetUrl,
-                            body: { mode: pythonMode }
-                          })
-                        });
-                      } else {
-                        await fetch(targetUrl, {
-                          method: "POST",
-                          mode: "cors",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ mode: pythonMode })
-                        });
-                      }
-                    } catch (e) {
-                      console.warn("Could not sync directly with local STAP node IP. Will sync via cloud.", e);
-                    }
+                    const pythonMode = m?.toLowerCase() || "auto";
+                    await dispatchControlToNode(nodeIp, "/control/mode", { mode: pythonMode });
                   }
                 }}
                 activeLane={activeLane}
@@ -1271,51 +1320,10 @@ export default function App() {
 
                   // 2. Sync to local physical Python controller
                   if (nodeIp) {
-                    try {
-                      const isHttps = window.location.protocol === "https:";
-                      
-                      // Ensure manual mode is selected
-                      const modeUrl = `http://${nodeIp.trim()}:5000/control/mode`;
-                      if (isHttps) {
-                        await fetch("/api/v1/proxy-python-control", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            targetUrl: modeUrl,
-                            body: { mode: "manual" }
-                          })
-                        });
-                      } else {
-                        await fetch(modeUrl, {
-                          method: "POST",
-                          mode: "cors",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ mode: "manual" })
-                        });
-                      }
-
-                      // Trigger light override
-                      const lightUrl = `http://${nodeIp.trim()}:5000/control/light`;
-                      if (isHttps) {
-                        await fetch("/api/v1/proxy-python-control", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            targetUrl: lightUrl,
-                            body: { lane, state: (light || "RED").toLowerCase() }
-                          })
-                        });
-                      } else {
-                        await fetch(lightUrl, {
-                          method: "POST",
-                          mode: "cors",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ lane, state: (light || "RED").toLowerCase() })
-                        });
-                      }
-                    } catch (e) {
-                      console.warn("Could not directly contact local STAP node:", e);
-                    }
+                    // Ensure manual mode is selected
+                    await dispatchControlToNode(nodeIp, "/control/mode", { mode: "manual" });
+                    // Trigger light override
+                    await dispatchControlToNode(nodeIp, "/control/light", { lane, state: (light || "RED").toLowerCase() });
                   }
                 }}
                 weather={weather}
