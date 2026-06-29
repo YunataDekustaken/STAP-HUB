@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Check, X, Eye, FileText, Info, Mail, Send, HardDrive, ExternalLink, Loader2 } from "lucide-react";
+import { Check, X, Eye, FileText, Info, Mail, Send, HardDrive, ExternalLink, Loader2, Play } from "lucide-react";
 
 export interface FootageRequest {
   id: string;

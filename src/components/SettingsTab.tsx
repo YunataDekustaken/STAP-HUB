@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Lane, LightState, User, Role } from "../types";
+import { Lane, LightState, User, Role, FirebaseConnectionConfig } from "../types";
 import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X, Clock, HardDrive } from "lucide-react";
-import { getFirebaseConfig, saveFirebaseConfig, getFirebaseInstances, handleFirestoreError, OperationType, STAPDatabaseManager } from "../firebase";
+import { getFirebaseConfig, saveFirebaseConfig, getFirebaseInstances, handleFirestoreError, OperationType, STAPDatabaseManager, FirebaseSavedSettings } from "../firebase";
 import { collection, onSnapshot, doc, addDoc, setDoc, deleteDoc } from "firebase/firestore";
 import AdminSettingsTab from "./AdminSettingsTab";
 
@@ -295,6 +295,25 @@ export default function SettingsTab({
     } catch (e) {
       console.error("Failed to sync weather to server:", e);
     }
+  };
+
+  const handleUserSwitch = (role: Role) => {
+    // In a real app, this would be an actual auth change. 
+    // In this simulation, we'll just update the current user's role in the list if they are the owner.
+    const owner = users.find(u => u.email?.toLowerCase() === "stap.est2526@gmail.com");
+    if (owner) {
+      handleUpdateRole(owner.id, role);
+    }
+  };
+
+  const handleUpdateFirebase = (config: Omit<FirebaseConnectionConfig, "connected">) => {
+    saveFirebaseConfig(config as FirebaseSavedSettings);
+    setFirebaseConnected(true);
+  };
+
+  const handleResetFirebase = () => {
+    localStorage.removeItem("stap_firebase_config");
+    setFirebaseConnected(false);
   };
 
   return (
@@ -826,9 +845,12 @@ export default function SettingsTab({
       {activeSubTab === "admin" && (
         <AdminSettingsTab
           currentUser={users.find(u => u.email?.toLowerCase() === "stap.est2526@gmail.com") || users[0]}
-          onUpdateFirebaseConfig={() => {}}
-          pythonStreamUrl=""
-          onUpdateStreamUrl={() => {}}
+          onUserSwitch={handleUserSwitch}
+          firebaseConnection={getFirebaseConfig()}
+          onUpdateFirebase={handleUpdateFirebase}
+          onResetFirebase={handleResetFirebase}
+          pythonStreamUrl={nodeIp}
+          onUpdateStreamUrl={setNodeIp}
         />
       )}
 

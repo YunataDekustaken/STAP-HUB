@@ -24,7 +24,7 @@ import {
 } from "firebase/firestore";
 import { FirebaseConnectionConfig, TrafficHistoryLog, User, Role } from "./types";
 
-interface FirebaseSavedSettings {
+export interface FirebaseSavedSettings {
   apiKey: string;
   authDomain: string;
   projectId: string;

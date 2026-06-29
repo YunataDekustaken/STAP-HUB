@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { User, FirebaseConnectionConfig, Role } from "../types";
-import { Shield, Key, Database, RefreshCw, CheckCircle2, UserCheck, Play, HelpCircle, Mail, HardDrive, ExternalLink } from "lucide-react";
+import { Shield, Key, Database, RefreshCw, CheckCircle2, UserCheck, Play, HelpCircle, Mail, HardDrive, ExternalLink, Info } from "lucide-react";
 
 interface AdminSettingsTabProps {
   currentUser: User;
