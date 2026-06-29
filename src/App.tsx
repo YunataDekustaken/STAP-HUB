@@ -514,6 +514,10 @@ export default function App() {
 
           const localRes = await Promise.race([controllerFetch, timeoutPromise]);
           if (localRes.ok) {
+            const contentType = localRes.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+              throw new Error("Local node returned non-JSON content");
+            }
             const localData = await localRes.json();
             
             setIsNodeConnected(true);
@@ -581,6 +585,10 @@ export default function App() {
         try {
           const res = await fetch(`/api/v1/status?t=${Date.now()}`);
           if (res.ok) {
+            const contentType = res.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+              throw new Error("Cloud server returned non-JSON content");
+            }
             const data = await res.json();
             setIsNodeConnected(data.nodeOnline);
             

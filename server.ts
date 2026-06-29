@@ -166,23 +166,25 @@ const oauth2ClientBase = new google.auth.OAuth2(
  * It prioritizes the refresh token from Firestore, falling back to process.env.
  */
 async function getAutoRefreshingAuthClient() {
-  if (!db) {
-    throw new Error("Firebase Admin SDK is not initialized.");
-  }
-
-  // 1. Fetch the saved permanent refresh token from Firestore
-  const authSnap = await db.collection("system").doc("google_auth").get();
   let refreshToken = GOOGLE_REFRESH_TOKEN;
-  
-  if (authSnap.exists) {
-    const data = authSnap.data();
-    if (data?.refresh_token) {
-      refreshToken = data.refresh_token;
+
+  // 1. Fetch the saved permanent refresh token from Firestore if available
+  if (db) {
+    try {
+      const authSnap = await db.collection("system").doc("google_auth").get();
+      if (authSnap.exists) {
+        const data = authSnap.data();
+        if (data?.refresh_token) {
+          refreshToken = data.refresh_token;
+        }
+      }
+    } catch (e) {
+      console.warn("[STAP HUB] Failed to fetch refresh token from Firestore, falling back to environment variable.");
     }
   }
 
   if (!refreshToken) {
-    throw new Error("Google Workspace not connected. Please connect your account in Admin Settings.");
+    throw new Error("Google Workspace not connected. Please connect your account in Admin Settings or set GOOGLE_REFRESH_TOKEN.");
   }
 
   // 2. Create a clean OAuth instance
@@ -217,7 +219,7 @@ const HAS_FIREBASE_CREDS = !!(process.env.VITE_FIREBASE_PROJECT_ID || process.en
 let db: admin.firestore.Firestore | null = null;
 if (HAS_FIREBASE_CREDS) {
   try {
-    if (!admin.apps.length) {
+    if (!admin.apps || !admin.apps.length) {
       admin.initializeApp({
         projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID
       });

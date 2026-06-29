@@ -46,7 +46,7 @@ async function getAutoRefreshingAuthClient() {
   }
 
   if (!refreshToken) {
-    throw new Error("Google Workspace not connected. Please connect your account in Admin Settings.");
+    throw new Error("Google Workspace not connected. Please connect your account in Admin Settings or set GOOGLE_REFRESH_TOKEN.");
   }
 
   const authClient = new google.auth.OAuth2(
@@ -180,6 +180,8 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
 app.get("/api/google/drive-files", async (req: Request, res: Response) => {
   try {
     const auth = await getAutoRefreshingAuthClient();
+    if (!auth) throw new Error("Google Authentication not configured.");
+    
     const drive = google.drive({ version: "v3", auth });
     const response = await drive.files.list({
       q: "trashed = false",
@@ -189,7 +191,8 @@ app.get("/api/google/drive-files", async (req: Request, res: Response) => {
     });
     res.json({ success: true, files: response.data.files });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error("[STAP HUB] Drive List Error:", err);
+    res.status(500).json({ success: false, error: err.message || "Failed to list cloud archive." });
   }
 });
 
