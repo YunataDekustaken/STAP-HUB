@@ -228,15 +228,31 @@ export default function SettingsTab({
     
     try {
       // 1. Check direct reachability to local Python Flask endpoint
-      const controllerUrl = `http://${inputValue.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
+      const isHttps = window.location.protocol === "https:";
+      let controllerUrl = `http://${inputValue.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
       
+      // If we are on HTTPS, we must use the server-side proxy to avoid Mixed Content errors
+      if (isHttps) {
+        controllerUrl = `/api/v1/proxy-python-status?url=${encodeURIComponent(controllerUrl)}`;
+      }
+
       // Use a short timeout for direct IP check to avoid long hangs on Mixed Content blocked requests
-      const pingPromise = fetch(controllerUrl, { mode: "cors" });
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Timeout")), 1500)
+      const pingPromise = fetch(controllerUrl, { 
+        mode: isHttps ? "same-origin" : "cors" 
+      });
+      const timeoutPromise = new Promise<Response>((_, reject) => 
+        setTimeout(() => reject(new Error("Timeout")), 2000)
       );
       
-      await Promise.race([pingPromise, timeoutPromise]);
+      const res = await Promise.race([pingPromise, timeoutPromise]) as Response;
+      
+      if (!res.ok) {
+        // Handle the 502 gracefully without crashing the console
+        if (res.status === 502) {
+          console.debug("Backend currently unreachable via proxy (502).");
+        }
+        throw new Error(`Proxy response not OK: ${res.status}`);
+      }
       
       setIsConnecting(false);
       setIsNodeConnected(true);

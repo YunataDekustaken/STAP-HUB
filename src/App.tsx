@@ -521,70 +521,79 @@ export default function App() {
           );
 
           const localRes = await Promise.race([controllerFetch, timeoutPromise]);
-          if (localRes.ok) {
-            const contentType = localRes.headers.get("content-type");
-            if (!contentType || !contentType.includes("application/json")) {
-              throw new Error("Local node returned non-JSON content");
-            }
-            const localData = await localRes.json();
-            
-            setIsNodeConnected(true);
-            
-            // Map the Flask status format into our React types
-            const rawMode = localData.mode?.toUpperCase();
-            const mappedMode: SystemMode = 
-              rawMode === "MANUAL" ? "MANUAL" : 
-              rawMode === "HAZARD" ? "HAZARD" : 
-              rawMode === "EMERGENCY" ? "EMERGENCY" : "AUTO";
-            const mappedActiveLane = (localData.active_lane?.toUpperCase() || "NORTH") as Lane;
-            const mappedWeather = localData.rain ? "RAINY" : "SUNNY";
-            const mappedRemainingSecs = localData.remaining_secs || 0;
-            
-            setSystemMode(mappedMode);
-            setActiveLane(mappedActiveLane);
-            setWeather(mappedWeather);
-            setRemainingSecs(mappedRemainingSecs);
-
-            if (localData.lanes) {
-              setLanes(localData.lanes);
+          if (!localRes.ok) {
+            // Handle the 502 gracefully without crashing the console
+            if (localRes.status === 502) {
+              console.debug("Backend currently unreachable (502).");
             } else {
-              const counts = localData.vehicle_counts || {};
-              const statuses = localData.lane_statuses || {};
-              const los = localData.los || {};
-
-              setLanes({
-                NORTH: {
-                  count: counts.NORTH ?? counts.north ?? 0,
-                  density: Math.min(100, Math.round((counts.NORTH ?? counts.north ?? 0) * 8.5)),
-                  light: ((statuses.NORTH ?? statuses.north)?.toUpperCase() || "RED") as LightState,
-                  los: los.NORTH ?? los.north ?? "—"
-                },
-                SOUTH: {
-                  count: counts.SOUTH ?? counts.south ?? 0,
-                  density: Math.min(100, Math.round((counts.SOUTH ?? counts.south ?? 0) * 8.5)),
-                  light: ((statuses.SOUTH ?? statuses.south)?.toUpperCase() || "RED") as LightState,
-                  los: los.SOUTH ?? los.south ?? "—"
-                },
-                EAST: {
-                  count: counts.EAST ?? counts.east ?? 0,
-                  density: Math.min(100, Math.round((counts.EAST ?? counts.east ?? 0) * 8.5)),
-                  light: ((statuses.EAST ?? statuses.east)?.toUpperCase() || "RED") as LightState,
-                  los: los.EAST ?? los.east ?? "—"
-                },
-                WEST: {
-                  count: counts.WEST ?? counts.west ?? 0,
-                  density: Math.min(100, Math.round((counts.WEST ?? counts.west ?? 0) * 8.5)),
-                  light: ((statuses.WEST ?? statuses.west)?.toUpperCase() || "RED") as LightState,
-                  los: los.WEST ?? los.west ?? "—"
-                }
-              });
+              console.warn(`STAP Node unreachable: ${localRes.status}`);
             }
-
-            dataFetched = true;
+            throw new Error(`Proxy response not OK: ${localRes.status}`);
           }
+          
+          const contentType = localRes.headers.get("content-type");
+          if (!contentType || !contentType.includes("application/json")) {
+            throw new Error("Local node returned non-JSON content");
+          }
+          const localData = await localRes.json();
+          
+          setIsNodeConnected(true);
+          
+          // Map the Flask status format into our React types
+          const rawMode = localData.mode?.toUpperCase();
+          const mappedMode: SystemMode = 
+            rawMode === "MANUAL" ? "MANUAL" : 
+            rawMode === "HAZARD" ? "HAZARD" : 
+            rawMode === "EMERGENCY" ? "EMERGENCY" : "AUTO";
+          const mappedActiveLane = (localData.active_lane?.toUpperCase() || "NORTH") as Lane;
+          const mappedWeather = localData.rain ? "RAINY" : "SUNNY";
+          const mappedRemainingSecs = localData.remaining_secs || 0;
+          
+          setSystemMode(mappedMode);
+          setActiveLane(mappedActiveLane);
+          setWeather(mappedWeather);
+          setRemainingSecs(mappedRemainingSecs);
+
+          if (localData.lanes) {
+            setLanes(localData.lanes);
+          } else {
+            const counts = localData.vehicle_counts || {};
+            const statuses = localData.lane_statuses || {};
+            const los = localData.los || {};
+
+            setLanes({
+              NORTH: {
+                count: counts.NORTH ?? counts.north ?? 0,
+                density: Math.min(100, Math.round((counts.NORTH ?? counts.north ?? 0) * 8.5)),
+                light: ((statuses.NORTH ?? statuses.north)?.toUpperCase() || "RED") as LightState,
+                los: los.NORTH ?? los.north ?? "—"
+              },
+              SOUTH: {
+                count: counts.SOUTH ?? counts.south ?? 0,
+                density: Math.min(100, Math.round((counts.SOUTH ?? counts.south ?? 0) * 8.5)),
+                light: ((statuses.SOUTH ?? statuses.south)?.toUpperCase() || "RED") as LightState,
+                los: los.SOUTH ?? los.south ?? "—"
+              },
+              EAST: {
+                count: counts.EAST ?? counts.east ?? 0,
+                density: Math.min(100, Math.round((counts.EAST ?? counts.east ?? 0) * 8.5)),
+                light: ((statuses.EAST ?? statuses.east)?.toUpperCase() || "RED") as LightState,
+                los: los.EAST ?? los.east ?? "—"
+              },
+              WEST: {
+                count: counts.WEST ?? counts.west ?? 0,
+                density: Math.min(100, Math.round((counts.WEST ?? counts.west ?? 0) * 8.5)),
+                light: ((statuses.WEST ?? statuses.WEST)?.toUpperCase() || "RED") as LightState,
+                los: los.WEST ?? los.west ?? "—"
+              }
+            });
+          }
+
+          dataFetched = true;
         } catch (localErr) {
           // Fall back gracefully to cloud check if we cannot reach local IP
           // Silencing debug logs as per user request to avoid notification clutter
+          console.debug("Polling local node paused: backend offline.");
         }
       }
 
@@ -617,7 +626,8 @@ export default function App() {
             }
           }
         } catch (err) {
-          console.error("STAP Live status sync error:", err);
+          // Silent catch for cloud polling too if it fails
+          console.debug("Cloud polling inactive.");
         }
       }
     };

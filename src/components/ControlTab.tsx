@@ -160,7 +160,13 @@ export default function ControlTab({
       );
       
       const res = await Promise.race([pingPromise, timeoutPromise]) as Response;
-      if (!res.ok) throw new Error("Proxy response not OK");
+      if (!res.ok) {
+        // Handle the 502 gracefully without crashing the console
+        if (res.status === 502) {
+          console.debug("Backend currently unreachable via proxy (502).");
+        }
+        throw new Error(`Proxy response not OK: ${res.status}`);
+      }
       
       setIsConnecting(false);
       setIsNodeConnected(true);
