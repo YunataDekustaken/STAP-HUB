@@ -750,11 +750,13 @@ app.get("/api/v1/proxy-python-status", asyncHandler(async (req: Request, res: Re
   }
 }));
 
+const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "";
+
 // --- API ROUTE: Google Auth - Status ---
 app.get("/api/auth/google/status", asyncHandler(async (req: Request, res: Response) => {
   try {
     const auth = await getAutoRefreshingAuthClient();
-    const oauth2 = google.oauth2({ version: "2", auth });
+    const oauth2 = google.oauth2({ version: "v2", auth });
     const userInfo = await oauth2.userinfo.get();
     
     res.json({ 
@@ -764,6 +766,60 @@ app.get("/api/auth/google/status", asyncHandler(async (req: Request, res: Respon
     });
   } catch (err: any) {
     res.json({ success: true, connected: false, error: err.message });
+  }
+}));
+
+// --- API ROUTE: Weather Configuration & Data ---
+app.get("/api/weather/config", asyncHandler(async (req: Request, res: Response) => {
+  if (!db) return res.json({ success: true, location: "Marikina City" });
+  try {
+    const snap = await db.collection("system").doc("weather_config").get();
+    if (snap.exists) {
+      res.json({ success: true, ...snap.data() });
+    } else {
+      res.json({ success: true, location: "Marikina City" });
+    }
+  } catch (err: any) {
+    res.json({ success: true, location: "Marikina City", error: err.message });
+  }
+}));
+
+app.post("/api/weather/config", asyncHandler(async (req: Request, res: Response) => {
+  if (!db) return res.status(500).json({ success: false, error: "Database not connected" });
+  try {
+    const { location } = req.body;
+    await db.collection("system").doc("weather_config").set({ 
+      location, 
+      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+    }, { merge: true });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}));
+
+app.get("/api/weather/forecast", asyncHandler(async (req: Request, res: Response) => {
+  try {
+    if (!WEATHER_API_KEY) {
+      return res.status(500).json({ success: false, error: "Weather API Key not configured." });
+    }
+
+    let location = "Marikina City";
+    if (db) {
+      const snap = await db.collection("system").doc("weather_config").get();
+      if (snap.exists && snap.data()?.location) {
+        location = snap.data()?.location;
+      }
+    }
+
+    const response = await fetch(`http://api.weatherapi.com/v1/forecast.json?key=${WEATHER_API_KEY}&q=${encodeURIComponent(location)}&days=3&aqi=no&alerts=no`);
+    if (!response.ok) {
+      throw new Error(`WeatherAPI returned ${response.status}`);
+    }
+    const data = await response.json();
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 }));
 
@@ -790,7 +846,7 @@ app.get("/api/auth/google/url", (req: Request, res: Response) => {
       prompt: "consent"
     });
 
-    console.log(`[STAP HUB] Generated Google Auth URL with Redirect: ${oauth2Client.redirectUri}`);
+    console.log(`[STAP HUB] Generated Google Auth URL`);
     res.json({ success: true, url });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

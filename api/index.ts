@@ -121,13 +121,15 @@ app.get("/api/v1/proxy-python-status", async (req: Request, res: Response) => {
   }
 });
 
+const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "";
+
 // --- API ROUTE: Google Auth - Status ---
 app.get("/api/auth/google/status", async (req: Request, res: Response) => {
   try {
     const auth = await getAutoRefreshingAuthClient();
     if (!auth) return res.json({ success: true, connected: false });
     
-    const oauth2 = google.oauth2({ version: "2", auth });
+    const oauth2 = google.oauth2({ version: "v2", auth });
     const userInfo = await oauth2.userinfo.get();
     
     res.json({ 
@@ -137,6 +139,32 @@ app.get("/api/auth/google/status", async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     res.json({ success: true, connected: false, error: err.message });
+  }
+});
+
+// --- API ROUTE: Weather Configuration & Data ---
+app.get("/api/weather/config", async (req: Request, res: Response) => {
+  // Use public Firestore REST if needed, but for simplicity we return defaults or use env
+  // In a real Vercel deploy, we'd fetch from Firestore via SDK or REST
+  res.json({ success: true, location: process.env.WEATHER_LOCATION || "Marikina City" });
+});
+
+app.get("/api/weather/forecast", async (req: Request, res: Response) => {
+  try {
+    if (!WEATHER_API_KEY) {
+      return res.status(500).json({ success: false, error: "Weather API Key not configured." });
+    }
+
+    const location = req.query.location as string || process.env.WEATHER_LOCATION || "Marikina City";
+
+    const response = await fetch(`http://api.weatherapi.com/v1/forecast.json?key=${WEATHER_API_KEY}&q=${encodeURIComponent(location)}&days=3&aqi=no&alerts=no`);
+    if (!response.ok) {
+      throw new Error(`WeatherAPI returned ${response.status}`);
+    }
+    const data = await response.json();
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
