@@ -226,7 +226,7 @@ export default function App() {
         const lowerEmail = userEmail.toLowerCase().trim();
         
         // Check registry matches
-        const matchedUser = users.find(u => u.email?.toLowerCase().trim() === lowerEmail);
+        const matchedUser = users.find(u => u.email?.toLowerCase()?.trim() === lowerEmail);
         const isOwner = lowerEmail === "stap.est2526@gmail.com";
         
         let userRole = matchedUser?.role;
@@ -329,7 +329,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
 
-    const matched = users.find(u => u.email?.toLowerCase().trim() === currentUser.email?.toLowerCase().trim());
+    const matched = users.find(u => u.email?.toLowerCase()?.trim() === currentUser.email?.toLowerCase()?.trim());
     if (matched) {
       if (currentUser.role !== matched.role || currentUser.name !== matched.name) {
         setCurrentUser(prev => prev ? {
@@ -347,7 +347,7 @@ export default function App() {
       }
     } else {
       // If their account was removed from the registry, automatically trigger logout
-      if (currentUser.email.toLowerCase().trim() !== "stap.est2526@gmail.com") {
+      if (currentUser.email.toLowerCase()?.trim() !== "stap.est2526@gmail.com") {
         handleLogout();
       }
     }

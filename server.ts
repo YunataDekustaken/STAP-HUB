@@ -149,22 +149,66 @@ const CAMERA_ID_TO_LANE: Record<number, "NORTH" | "SOUTH" | "EAST" | "WEST"> = {
 
 const AUTHORIZATION_TOKEN = "node_alpha_J7FVxdRBqwCBWQSdiKBN742lMHuEPX5A";
 
-// --- GOOGLE WORKSPACE API SETUP (Manual Connection) ---
+// --- GOOGLE WORKSPACE API SETUP ---
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN || "";
 const APP_URL = process.env.APP_URL || "http://localhost:3000";
 
-const oauth2Client = new google.auth.OAuth2(
+const oauth2ClientBase = new google.auth.OAuth2(
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   `${APP_URL}/api/auth/google/callback`
 );
 
-if (GOOGLE_REFRESH_TOKEN) {
-  oauth2Client.setCredentials({
-    refresh_token: GOOGLE_REFRESH_TOKEN
+/**
+ * Helper function to get an auto-refreshing Google Auth Client.
+ * It prioritizes the refresh token from Firestore, falling back to process.env.
+ */
+async function getAutoRefreshingAuthClient() {
+  if (!db) {
+    throw new Error("Firebase Admin SDK is not initialized.");
+  }
+
+  // 1. Fetch the saved permanent refresh token from Firestore
+  const authSnap = await db.collection("system").doc("google_auth").get();
+  let refreshToken = GOOGLE_REFRESH_TOKEN;
+  
+  if (authSnap.exists) {
+    const data = authSnap.data();
+    if (data?.refresh_token) {
+      refreshToken = data.refresh_token;
+    }
+  }
+
+  if (!refreshToken) {
+    throw new Error("Google Workspace not connected. Please connect your account in Admin Settings.");
+  }
+
+  // 2. Create a clean OAuth instance
+  const authClient = new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    `${APP_URL}/api/auth/google/callback`
+  );
+
+  // 3. Set the refresh token
+  authClient.setCredentials({
+    refresh_token: refreshToken
   });
+
+  // 4. Listen for token updates (e.g. if Google issues a new refresh token)
+  authClient.on("tokens", async (newTokens) => {
+    if (newTokens.refresh_token && db) {
+      await db.collection("system").doc("google_auth").set({
+        refresh_token: newTokens.refresh_token,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      console.log("[STAP HUB] Google issued and updated a new refresh token in Firestore.");
+    }
+  });
+
+  return authClient;
 }
 
 // Serverless safe Firebase Admin Initialization
@@ -681,7 +725,7 @@ app.get("/api/auth/google/url", (req: Request, res: Response) => {
     "https://www.googleapis.com/auth/userinfo.email"
   ];
 
-  const url = oauth2Client.generateAuthUrl({
+  const url = oauth2ClientBase.generateAuthUrl({
     access_type: "offline",
     scope: scopes,
     prompt: "consent"
@@ -695,11 +739,17 @@ app.get("/api/auth/google/callback", asyncHandler(async (req: Request, res: Resp
   const { code } = req.query;
   if (!code) return res.status(400).send("No code provided.");
 
-  const { tokens } = await oauth2Client.getToken(code as string);
-  
-  // In a real app, you'd store these tokens securely in a DB linked to the user.
-  // For this "manual connection", we'll just show them so the user can add to secrets.
+  const { tokens } = await oauth2ClientBase.getToken(code as string);
   const refreshToken = tokens.refresh_token;
+
+  // Store the permanent refresh token in Firestore for background auto-refreshing
+  if (refreshToken && db) {
+    await db.collection("system").doc("google_auth").set({
+      refresh_token: refreshToken,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    console.log("[STAP HUB] Permanent Google Refresh Token saved to Firestore.");
+  }
 
   res.send(`
     <html>
@@ -725,60 +775,64 @@ app.get("/api/auth/google/callback", asyncHandler(async (req: Request, res: Resp
 
 // --- API ROUTE: Gmail - Send Reply to Footage Request ---
 app.post("/api/footage-requests/reply", asyncHandler(async (req: Request, res: Response) => {
-  if (!GOOGLE_REFRESH_TOKEN) {
-    return res.status(400).json({ success: false, error: "Google Workspace not connected. Please set GOOGLE_REFRESH_TOKEN." });
-  }
-
   const { to, subject, body } = req.body;
   if (!to || !body) {
     return res.status(400).json({ success: false, error: "Missing 'to' or 'body' in request." });
   }
 
-  const gmail = google.gmail({ version: "v1", auth: oauth2Client });
-  
-  // Create raw email string
-  const utf8Subject = `=?utf-8?B?${Buffer.from(subject || "Response to Footage Request").toString("base64")}?=`;
-  const messageParts = [
-    `To: ${to}`,
-    "Content-Type: text/html; charset=utf-8",
-    "MIME-Version: 1.0",
-    `Subject: ${utf8Subject}`,
-    "",
-    body
-  ];
-  const message = messageParts.join("\n");
+  try {
+    const auth = await getAutoRefreshingAuthClient();
+    const gmail = google.gmail({ version: "v1", auth });
+    
+    // Create raw email string
+    const utf8Subject = `=?utf-8?B?${Buffer.from(subject || "Response to Footage Request").toString("base64")}?=`;
+    const messageParts = [
+      `To: ${to}`,
+      "Content-Type: text/html; charset=utf-8",
+      "MIME-Version: 1.0",
+      `Subject: ${utf8Subject}`,
+      "",
+      body
+    ];
+    const message = messageParts.join("\n");
 
-  // The body needs to be base64url encoded
-  const encodedMessage = Buffer.from(message)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+    const encodedMessage = Buffer.from(message)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
 
-  await gmail.users.messages.send({
-    userId: "me",
-    requestBody: {
-      raw: encodedMessage,
-    },
-  });
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw: encodedMessage },
+    });
 
-  res.json({ success: true, message: "Email sent successfully via Gmail API." });
+    res.json({ success: true, message: "Email sent successfully via Gmail API." });
+  } catch (err: any) {
+    console.error("[STAP HUB] Gmail Send Error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 }));
 
-// --- API ROUTE: Google Drive - List Video Files ---
+// --- API ROUTE: Google Drive - List Files & Folders ---
 app.get("/api/google/drive-files", asyncHandler(async (req: Request, res: Response) => {
-  if (!GOOGLE_REFRESH_TOKEN) {
-    return res.status(400).json({ success: false, error: "Google Workspace not connected." });
+  try {
+    const auth = await getAutoRefreshingAuthClient();
+    const drive = google.drive({ version: "v3", auth });
+    
+    // Fetch both folders and files (prioritizing videos but showing everything)
+    const response = await drive.files.list({
+      q: "trashed = false",
+      fields: "files(id, name, mimeType, webViewLink, thumbnailLink, size, createdTime, iconLink)",
+      orderBy: "folder,name",
+      pageSize: 50
+    });
+
+    res.json({ success: true, files: response.data.files });
+  } catch (err: any) {
+    console.error("[STAP HUB] Drive List Error:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
-
-  const drive = google.drive({ version: "v3", auth: oauth2Client });
-  const response = await drive.files.list({
-    q: "mimeType contains 'video/'",
-    fields: "files(id, name, webViewLink, thumbnailLink, size, createdTime)",
-    pageSize: 20
-  });
-
-  res.json({ success: true, files: response.data.files });
 }));
 
 // Global Express error-handling middleware
