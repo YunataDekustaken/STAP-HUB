@@ -103,10 +103,9 @@ export default function AnalyticsTab() {
   const [viewerStatus, setViewerStatus] = useState<string | null>(null);
 
   const [generatingReport, setGeneratingReport] = useState<boolean>(false);
-  const [reportRequests, setReportRequests] = useState<any[]>([]);
   const [reportExportFormat, setReportExportFormat] = useState<"pdf" | "csv">("pdf");
   const [reportScope, setReportScope] = useState<"all" | "selected">("all");
-  
+
   // Sharing State
   const [showShareModal, setShowShareModal] = useState<boolean>(false);
   const [currentReport, setCurrentReport] = useState<{ doc?: any; csvData?: string; filename: string; type: string; previewUrl?: string } | null>(null);
@@ -115,23 +114,6 @@ export default function AnalyticsTab() {
   const [isSendingEmail, setIsSendingEmail] = useState<boolean>(false);
   const [isSavingToDrive, setIsSavingToDrive] = useState<boolean>(false);
   const [shareSuccess, setShareSuccess] = useState<string | null>(null);
-
-  // Fetch report requests from Firestore
-  useEffect(() => {
-    const { db } = getFirebaseInstances();
-    if (!db) return;
-
-    const q = query(collection(db, "report_requests"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const requests = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setReportRequests(requests);
-    });
-
-    return () => unsubscribe();
-  }, []);
 
   const handleGenerateAdminReport = async (type: string, autoOpenShare = true) => {
     setGeneratingReport(true);
@@ -309,131 +291,7 @@ export default function AnalyticsTab() {
     }
   };
 
-  const handleApproveReportRequest = async (request: any) => {
-    const { db } = getFirebaseInstances();
-    if (!db) return;
 
-    try {
-      // 1. Generate PDF
-      const ledgersToReport = unifiedLedgers.filter(l => {
-        const uploadedAt = new Date(l.uploadedAt).getTime();
-        const start = new Date(request.requestedRange.startDate).getTime();
-        const end = new Date(request.requestedRange.endDate).getTime() + (24 * 60 * 60 * 1000);
-        return uploadedAt >= start && uploadedAt < end;
-      });
-
-      const parsedDataList = ledgersToReport.map(l => {
-        if (!l.csvData) return null;
-        try { return parseTrafficCSV(l.csvData); } catch (e) { return null; }
-      }).filter(Boolean) as ParsedTrafficData[];
-
-      const metadata: ReportMetadata = {
-        type: "Certified Traffic Log",
-        dateRange: `${request.requestedRange.startDate} to ${request.requestedRange.endDate}`,
-        generatedBy: "STAP Hub Operations",
-        certifiedBy: "Inspector Martinez", // Mock officer
-        refNumber: `REQ-${request.id.substring(0, 8).toUpperCase()}`
-      };
-
-      const reportDoc = generateTrafficReport(parsedDataList, metadata);
-      const pdfDataUri = reportDoc.output("datauristring");
-
-      // 2. Update Firestore status
-      await setDoc(doc(db, "report_requests", request.id), {
-        ...request,
-        status: "APPROVED",
-        certifiedBy: "Inspector Martinez",
-        certifiedAt: new Date().toISOString(),
-        generatedPdfUrl: pdfDataUri
-      }, { merge: true });
-
-      alert("Request approved and certified successfully.");
-    } catch (err) {
-      console.error("Failed to approve report request:", err);
-      alert("Failed to approve request.");
-    }
-  };
-
-  const handleRejectReportRequest = async (requestId: string) => {
-    const { db } = getFirebaseInstances();
-    if (!db) return;
-    try {
-      await setDoc(doc(db, "report_requests", requestId), {
-        status: "REJECTED",
-        rejectedAt: new Date().toISOString()
-      }, { merge: true });
-    } catch (err) {
-      console.error("Failed to reject request:", err);
-    }
-  };
-
-  const ReportRequestsList = () => {
-    if (reportRequests.length === 0) {
-      return (
-        <div className="p-8 text-center text-slate-400 text-[10px] font-bold">
-          No certification requests pending review.
-        </div>
-      );
-    }
-
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-[11px] font-medium text-slate-600">
-          <thead className="bg-slate-50 border-b border-slate-200 text-[9px] font-black uppercase text-slate-400">
-            <tr>
-              <th className="px-5 py-3">Requester</th>
-              <th className="px-5 py-3">Range</th>
-              <th className="px-5 py-3">Status</th>
-              <th className="px-5 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-50">
-            {reportRequests.map((req) => (
-              <tr key={req.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-5 py-3">
-                  <div className="font-bold text-slate-800">{req.requesterInfo?.name || "Citizen"}</div>
-                  <div className="text-[9px] text-slate-400">{req.requesterInfo?.email}</div>
-                </td>
-                <td className="px-5 py-3">
-                  {req.requestedRange?.startDate} to {req.requestedRange?.endDate}
-                </td>
-                <td className="px-5 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${
-                    req.status === "PENDING" ? "bg-amber-100 text-amber-700" :
-                    req.status === "APPROVED" ? "bg-emerald-100 text-emerald-700" :
-                    "bg-rose-100 text-rose-700"
-                  }`}>
-                    {req.status}
-                  </span>
-                </td>
-                <td className="px-5 py-3 text-right">
-                  {req.status === "PENDING" && (
-                    <div className="flex items-center justify-end gap-2">
-                      <button 
-                        onClick={() => handleApproveReportRequest(req)}
-                        className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-all font-black text-[9px] uppercase"
-                      >
-                        Approve
-                      </button>
-                      <button 
-                        onClick={() => handleRejectReportRequest(req.id)}
-                        className="px-2 py-1 bg-rose-50 text-rose-700 rounded-md hover:bg-rose-100 transition-all font-black text-[9px] uppercase"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                  {req.status === "APPROVED" && (
-                    <span className="text-[9px] text-emerald-600 font-bold italic">Certified ✔</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
 
   // Fetch local ledgers from Express server
   const fetchLocalLedgers = async () => {
@@ -1852,19 +1710,7 @@ export default function AnalyticsTab() {
             </div>
           </div>
 
-          {/* Pending Certification Requests Table */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden mt-6">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                <span className="font-black text-xs text-slate-800 uppercase tracking-wider">Public Certification Requests</span>
-              </div>
-              <span className="text-[10px] font-bold text-slate-400">Requires Manual Review</span>
-            </div>
-            
-            {/* Report Requests List */}
-            <ReportRequestsList />
-          </div>
+
         </div>
       ) : subTab === "daily" ? (
         /* DAILY ROLLUP VIEW PANEL */

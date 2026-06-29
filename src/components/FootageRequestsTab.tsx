@@ -25,9 +25,11 @@ export interface FootageRequest {
 interface FootageRequestsTabProps {
   requests: FootageRequest[];
   onUpdateRequestStatus: (id: string, nextStatus: FootageRequest["status"], handledBy?: string) => void;
+  reportRequests?: any[];
+  onUpdateReportRequest?: (id: string, updatedFields: any) => void;
 }
 
-export default function FootageRequestsTab({ requests, onUpdateRequestStatus }: FootageRequestsTabProps) {
+export default function FootageRequestsTab({ requests, onUpdateRequestStatus, reportRequests: propReportRequests, onUpdateReportRequest }: FootageRequestsTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<"NEW" | "ONGOING" | "REJECTED">("NEW");
   const [selectedRequest, setSelectedRequest] = useState<FootageRequest | null>(null);
   
@@ -41,6 +43,14 @@ export default function FootageRequestsTab({ requests, onUpdateRequestStatus }: 
   const [cloudLedgers, setCloudLedgers] = useState<any[]>([]);
   const [isProcessingReport, setIsProcessingReport] = useState<string | null>(null);
   const [certifiedSubTab, setCertifiedSubTab] = useState<"PENDING" | "APPROVED" | "REJECTED">("PENDING");
+
+  // Sync propReportRequests if offline
+  useEffect(() => {
+    const { db } = getFirebaseInstances();
+    if (!db && propReportRequests) {
+      setReportRequests(propReportRequests);
+    }
+  }, [propReportRequests]);
 
   // Real-time synchronization of Certified Report Requests & Ledgers
   useEffect(() => {
@@ -130,7 +140,6 @@ export default function FootageRequestsTab({ requests, onUpdateRequestStatus }: 
   // Handle Approve Certified Report Request
   const handleApproveReportRequest = async (request: any) => {
     const { db } = getFirebaseInstances();
-    if (!db) return;
 
     setIsProcessingReport(request.id);
     try {
@@ -158,14 +167,19 @@ export default function FootageRequestsTab({ requests, onUpdateRequestStatus }: 
       const reportDoc = generateTrafficReport(parsedDataList, metadata);
       const pdfDataUri = reportDoc.output("datauristring");
 
-      // 2. Update Firestore document with approval details and the Base64 PDF
-      await setDoc(doc(db, "report_requests", request.id), {
-        ...request,
-        status: "APPROVED",
+      const approvalFields = {
+        status: "APPROVED" as const,
         certifiedBy: "Inspector Martinez",
         certifiedAt: new Date().toISOString(),
         generatedPdfUrl: pdfDataUri
-      }, { merge: true });
+      };
+
+      if (db) {
+        // 2. Update Firestore document with approval details and the Base64 PDF
+        await setDoc(doc(db, "report_requests", request.id), approvalFields, { merge: true });
+      } else if (onUpdateReportRequest) {
+        onUpdateReportRequest(request.id, approvalFields);
+      }
 
       // 3. Dispatch an official notification email to the citizen
       try {
@@ -244,16 +258,21 @@ export default function FootageRequestsTab({ requests, onUpdateRequestStatus }: 
   // Handle Reject Certified Report Request
   const handleRejectReportRequest = async (request: any) => {
     const { db } = getFirebaseInstances();
-    if (!db) return;
 
     if (!confirm("Are you sure you want to REJECT this report request?")) return;
 
     setIsProcessingReport(request.id);
     try {
-      await setDoc(doc(db, "report_requests", request.id), {
-        status: "REJECTED",
+      const rejectFields = {
+        status: "REJECTED" as const,
         rejectedAt: new Date().toISOString()
-      }, { merge: true });
+      };
+
+      if (db) {
+        await setDoc(doc(db, "report_requests", request.id), rejectFields, { merge: true });
+      } else if (onUpdateReportRequest) {
+        onUpdateReportRequest(request.id, rejectFields);
+      }
 
       // Dispatch rejection notification email to the citizen
       try {

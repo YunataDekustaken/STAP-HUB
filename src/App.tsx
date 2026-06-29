@@ -99,6 +99,41 @@ const INITIAL_ANNOUNCEMENTS: Announcement[] = [
   }
 ];
 
+// Initial seed data for Report/On-Demand Requests
+const INITIAL_REPORT_REQUESTS = [
+  {
+    id: "rep-9831",
+    status: "PENDING",
+    type: "Certified Traffic Log",
+    requestedRange: { startDate: "2026-06-20", endDate: "2026-06-25" },
+    requesterInfo: {
+      name: "Juan Dela Cruz",
+      email: "juan.delacruz@example.com",
+      organization: "Marikina Public Safety",
+      contact: "09171234567",
+      address: "123 Shoe Ave, Marikina, Metro Manila"
+    },
+    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()
+  },
+  {
+    id: "rep-1024",
+    status: "APPROVED",
+    type: "On-Demand: Daily Summary",
+    requestedRange: { startDate: "2026-06-22", endDate: "2026-06-29" },
+    requesterInfo: {
+      name: "Maria Santos",
+      email: "maria.santos@gmail.com",
+      organization: "Individual / Citizen",
+      contact: "—",
+      address: "—"
+    },
+    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    certifiedBy: "Inspector Martinez",
+    certifiedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    generatedPdfUrl: ""
+  }
+];
+
 export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<SidebarTab>("DASHBOARD");
@@ -145,6 +180,22 @@ export default function App() {
   const [footageRequests, setFootageRequests] = useState<FootageRequest[]>(INITIAL_FOOTAGE_REQUESTS);
   const [incidentReports, setIncidentReports] = useState<IncidentReport[]>(INITIAL_INCIDENT_REPORTS);
   const [announcements, setAnnouncements] = useState<Announcement[]>(INITIAL_ANNOUNCEMENTS);
+  const [reportRequests, setReportRequests] = useState<any[]>(() => {
+    const local = localStorage.getItem("stap_report_requests_persistent");
+    if (local) {
+      try {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {
+        // fallback
+      }
+    }
+    return INITIAL_REPORT_REQUESTS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem("stap_report_requests_persistent", JSON.stringify(reportRequests));
+  }, [reportRequests]);
 
   // Helper function to update system settings in Firestore
   const updateSystemSettingsInFirestore = async (updatedFields: {
@@ -404,6 +455,21 @@ export default function App() {
       setFirebaseSyncError(error.message || String(error));
     });
 
+    // 3.1 Live Sync Report Requests
+    const unsubReportRequests = onSnapshot(collection(db, "report_requests"), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((d) => {
+        list.push({ id: d.id, ...d.data() });
+      });
+      if (list.length > 0) {
+        setReportRequests(list);
+      }
+      setFirebaseSyncError(null);
+    }, (error) => {
+      console.error("Firestore Report Requests Sync Error:", error);
+      setFirebaseSyncError(error.message || String(error));
+    });
+
     // 4. Live Sync System Settings
     const unsubSettings = onSnapshot(doc(db, "settings", "system"), (docSnap) => {
       if (docSnap.exists()) {
@@ -483,6 +549,7 @@ export default function App() {
       unsubFootage();
       unsubIncidents();
       unsubAnnouncements();
+      unsubReportRequests();
       unsubSettings();
       unsubUsers();
     };
@@ -782,17 +849,29 @@ export default function App() {
   // Handle public report request additions
   const handleAddReportRequestPublic = async (newReq: ReportRequestSubmission) => {
     const { db } = getFirebaseInstances();
-    if (!db) return;
+    const tempId = `REP-${Math.floor(1000 + Math.random() * 9000)}`;
+    const request = {
+      ...newReq,
+      status: "PENDING" as const,
+      createdAt: new Date().toISOString()
+    };
 
-    try {
-      await addDoc(collection(db, "report_requests"), {
-        ...newReq,
-        status: "PENDING",
-        createdAt: new Date().toISOString()
-      });
-    } catch (err) {
-      console.error("Failed to submit report request:", err);
+    if (db) {
+      try {
+        await setDoc(doc(db, "report_requests", tempId), request);
+      } catch (err) {
+        console.error("Failed to submit report request:", err);
+      }
+    } else {
+      setReportRequests((prev) => [{ id: tempId, ...request }, ...prev]);
     }
+  };
+
+  // Handle report request status updates (approved, rejected, etc.) offline or online
+  const handleUpdateReportRequest = (id: string, updatedFields: any) => {
+    setReportRequests((prev) =>
+      prev.map((req) => (req.id === id ? { ...req, ...updatedFields } : req))
+    );
   };
 
   // Get screen titles to match screenshots
@@ -803,7 +882,7 @@ export default function App() {
       case "TRAFFIC_LIGHTS":
         return "Traffic Control";
       case "FOOTAGE_REQUESTS":
-        return "Footage Requests";
+        return "Data Requests";
       case "INCIDENT_REPORTS":
         return "Incident Reports";
       case "ANNOUNCEMENTS":
@@ -1114,6 +1193,8 @@ export default function App() {
               <FootageRequestsTab
                 requests={footageRequests}
                 onUpdateRequestStatus={handleUpdateRequestStatus}
+                reportRequests={reportRequests}
+                onUpdateReportRequest={handleUpdateReportRequest}
               />
             )}
 

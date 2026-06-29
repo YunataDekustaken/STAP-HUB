@@ -36,7 +36,7 @@ export default function Sidebar({ activeTab, onTabChange, isAdmin, onLoginClick 
     },
     {
       id: "FOOTAGE_REQUESTS" as const,
-      label: "Footage Requests",
+      label: "Data Requests",
       icon: FileText,
     },
     {
