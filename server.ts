@@ -678,6 +678,8 @@ app.get("/api/v1/status", asyncHandler(async (req: Request, res: Response) => {
   });
 }));
 
+let lastUserControlTime = 0;
+
 // --- API ROUTE: Force Set Intersection Mode or Lights (Used by Web Console) ---
 app.post("/api/v1/control", asyncHandler(async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
@@ -688,45 +690,95 @@ app.post("/api/v1/control", asyncHandler(async (req: Request, res: Response) => 
 
   await loadStateFromFirestore();
 
+  const now = Date.now();
+  const userControlActive = (now - lastUserControlTime) < 4000;
+
   if (isFromPython) {
-    systemState.heartbeatTime = Date.now();
-  }
+    systemState.heartbeatTime = now;
 
-  if (mode !== undefined) systemState.mode = mode;
-  if (activeLane !== undefined) systemState.activeLane = activeLane;
-  if (weather !== undefined) systemState.weather = weather;
-  if (remainingSecs !== undefined) systemState.remainingSecs = remainingSecs;
-  if (greenDuration !== undefined) systemState.greenDuration = greenDuration;
-
-  if (lanes) {
-    systemState.lanes = {
-      ...systemState.lanes,
-      ...lanes,
-    };
-  }
-
-  if (!isFromPython) {
-    if (systemState.mode === "AUTO") {
-      Object.keys(systemState.lanes).forEach((l) => {
+    // Update sensor measurements (vehicle counts, densities, LOS) from cameras
+    if (lanes) {
+      Object.keys(lanes).forEach((l) => {
         const lane = l as "NORTH" | "SOUTH" | "EAST" | "WEST";
-        systemState.lanes[lane].light = lane === systemState.activeLane ? "GREEN" : "RED";
-      });
-    } else if (systemState.mode === "HAZARD") {
-      Object.keys(systemState.lanes).forEach((l) => {
-        const lane = l as "NORTH" | "SOUTH" | "EAST" | "WEST";
-        systemState.lanes[lane].light = "YELLOW";
-      });
-    } else if (systemState.mode === "EMERGENCY") {
-      Object.keys(systemState.lanes).forEach((l) => {
-        const lane = l as "NORTH" | "SOUTH" | "EAST" | "WEST";
-        systemState.lanes[lane].light = "RED";
+        if (systemState.lanes[lane]) {
+          systemState.lanes[lane].count = lanes[lane].count ?? systemState.lanes[lane].count;
+          systemState.lanes[lane].density = lanes[lane].density ?? systemState.lanes[lane].density;
+          systemState.lanes[lane].los = lanes[lane].los ?? systemState.lanes[lane].los;
+        }
       });
     }
+
+    if (userControlActive) {
+      // User recently clicked a webapp button, which overrides local Python reports
+      if (systemState.mode === "AUTO") {
+        if (remainingSecs !== undefined) systemState.remainingSecs = remainingSecs;
+        if (greenDuration !== undefined) systemState.greenDuration = greenDuration;
+      }
+    } else {
+      // No recent webapp interaction, accept local hardware changes (physical buttons / YOLO)
+      if (mode !== undefined && mode !== systemState.mode) {
+        systemState.mode = mode as any;
+      }
+      if (activeLane !== undefined && activeLane !== systemState.activeLane) {
+        systemState.activeLane = activeLane as any;
+      }
+      if (remainingSecs !== undefined) systemState.remainingSecs = remainingSecs;
+      if (greenDuration !== undefined) systemState.greenDuration = greenDuration;
+      if (weather !== undefined) systemState.weather = weather as any;
+
+      Object.keys(systemState.lanes).forEach((l) => {
+        const lane = l as "NORTH" | "SOUTH" | "EAST" | "WEST";
+        if (lanes && lanes[lane] && lanes[lane].light) {
+          systemState.lanes[lane].light = lanes[lane].light;
+        } else {
+          if (systemState.mode === "AUTO" || systemState.mode === "MANUAL") {
+            systemState.lanes[lane].light = lane === systemState.activeLane ? "GREEN" : "RED";
+          } else if (systemState.mode === "HAZARD") {
+            systemState.lanes[lane].light = "YELLOW";
+          } else if (systemState.mode === "EMERGENCY") {
+            systemState.lanes[lane].light = "RED";
+          }
+        }
+      });
+    }
+  } else {
+    // Webapp request (User action)
+    lastUserControlTime = now;
+
+    if (mode !== undefined) systemState.mode = mode;
+    if (activeLane !== undefined) systemState.activeLane = activeLane;
+    if (weather !== undefined) systemState.weather = weather;
+    if (remainingSecs !== undefined) systemState.remainingSecs = remainingSecs;
+    if (greenDuration !== undefined) systemState.greenDuration = greenDuration;
+
+    if (lanes) {
+      Object.keys(lanes).forEach((l) => {
+        const lane = l as "NORTH" | "SOUTH" | "EAST" | "WEST";
+        if (systemState.lanes[lane]) {
+          systemState.lanes[lane] = {
+            ...systemState.lanes[lane],
+            ...lanes[lane]
+          };
+        }
+      });
+    }
+
+    // Set lights immediately based on mode so UI responds instantly
+    Object.keys(systemState.lanes).forEach((l) => {
+      const lane = l as "NORTH" | "SOUTH" | "EAST" | "WEST";
+      if (systemState.mode === "AUTO" || systemState.mode === "MANUAL") {
+        systemState.lanes[lane].light = lane === systemState.activeLane ? "GREEN" : "RED";
+      } else if (systemState.mode === "HAZARD") {
+        systemState.lanes[lane].light = "YELLOW";
+      } else if (systemState.mode === "EMERGENCY") {
+        systemState.lanes[lane].light = "RED";
+      }
+    });
   }
 
   await syncStateToFirestore();
 
-  res.json({ success: true, state: systemState });
+  res.json({ success: true, mode: systemState.mode, activeLane: systemState.activeLane, state: systemState });
 }));
 
 // --- API ROUTE: Proxy for Insecure Python Stream Status (Bypasses HTTPS Mixed Content) ---

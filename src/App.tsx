@@ -730,21 +730,11 @@ export default function App() {
             const data = await res.json();
             setIsNodeConnected(data.nodeOnline);
             
-            if (data.nodeOnline) {
-              setSystemMode(data.mode);
-              setActiveLane(data.activeLane);
-              setWeather(data.weather);
-              setRemainingSecs(data.remainingSecs);
-              setLanes(normalizeLanes(data.lanes));
-            } else {
-              // Revert back to 0-count offline structure if Python node is not active on Cloud Hub either
-              setLanes({
-                NORTH: { count: 0, density: 0, light: "RED", los: "—" },
-                SOUTH: { count: 0, density: 0, light: "RED", los: "—" },
-                EAST: { count: 0, density: 0, light: "RED", los: "—" },
-                WEST: { count: 0, density: 0, light: "RED", los: "—" }
-              });
-            }
+            setSystemMode(data.mode);
+            setActiveLane(data.activeLane);
+            setWeather(data.weather);
+            setRemainingSecs(data.remainingSecs);
+            setLanes(normalizeLanes(data.lanes));
           }
         } catch (err) {
           // Silent catch for cloud polling too if it fails
@@ -1200,14 +1190,12 @@ export default function App() {
                       body: JSON.stringify({
                         mode: "MANUAL",
                         activeLane: lane,
-                        ...(!isNodeConnected ? {
-                          lanes: {
-                            NORTH: { light: lane === "NORTH" ? "GREEN" : "RED" },
-                            SOUTH: { light: lane === "SOUTH" ? "GREEN" : "RED" },
-                            EAST: { light: lane === "EAST" ? "GREEN" : "RED" },
-                            WEST: { light: lane === "WEST" ? "GREEN" : "RED" }
-                          }
-                        } : {})
+                        lanes: {
+                          NORTH: { light: lane === "NORTH" ? "GREEN" : "RED" },
+                          SOUTH: { light: lane === "SOUTH" ? "GREEN" : "RED" },
+                          EAST: { light: lane === "EAST" ? "GREEN" : "RED" },
+                          WEST: { light: lane === "WEST" ? "GREEN" : "RED" }
+                        }
                       })
                     });
                   } catch (e) {

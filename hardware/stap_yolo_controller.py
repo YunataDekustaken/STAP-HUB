@@ -940,6 +940,7 @@ def keepalive_thread():
             post_to_hub()
 
 def hub_realtime_sync_thread():
+    global manual_override, hazard_active, emergency_active, current_phase_idx, phase_state, green_start_time
     if not HUB_ENABLED: return
     while True:
         try:
@@ -1031,7 +1032,59 @@ def hub_realtime_sync_thread():
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             }
-            requests.post(control_url, json=body, headers=headers, timeout=2.0, verify=False)
+            response = requests.post(control_url, json=body, headers=headers, timeout=2.0, verify=False)
+            if response.status_code == 200:
+                resp_data = response.json()
+                cloud_state = resp_data.get('state', {})
+                cloud_mode = cloud_state.get('mode', '').upper()
+                cloud_active_lane = cloud_state.get('activeLane', '').upper()
+                
+                # Check if we need to synchronize mode
+                if cloud_mode:
+                    if cloud_mode == 'AUTO' and (manual_override or hazard_active or emergency_active):
+                        print(f"[STAP] 🔄 Cloud Sync: Setting AUTO mode")
+                        manual_override = False
+                        hazard_active = False
+                        emergency_active = False
+                        send_to_esp32('MODE:AUTO')
+                        with phase_lock:
+                            lane_to_start = PHASE_ORDER[current_phase_idx]
+                        green_dur = compute_green_time(lane_to_start, rain_detected)
+                        start_green(lane_to_start, green_dur)
+                    elif cloud_mode == 'MANUAL' and (not manual_override or hazard_active or emergency_active):
+                        print(f"[STAP] 🔄 Cloud Sync: Setting MANUAL mode")
+                        manual_override = True
+                        hazard_active = False
+                        emergency_active = False
+                        send_to_esp32('MODE:MANUAL')
+                        reset_all_manual_lights_to_red()
+                    elif cloud_mode == 'HAZARD' and not hazard_active:
+                        print(f"[STAP] 🔄 Cloud Sync: Setting HAZARD mode")
+                        manual_override = True
+                        hazard_active = True
+                        emergency_active = False
+                        send_to_esp32('MODE:HAZARD')
+                        for lane_name in LANE_NAMES:
+                            send_to_esp32(f'HAZARD:{lane_name}')
+                    elif cloud_mode == 'EMERGENCY' and not emergency_active:
+                        print(f"[STAP] 🔄 Cloud Sync: Setting EMERGENCY mode")
+                        manual_override = True
+                        hazard_active = False
+                        emergency_active = True
+                        send_to_esp32('MODE:EMERGENCY')
+                        reset_all_manual_lights_to_red()
+
+                # Check if we need to synchronize manual active lane light override
+                if cloud_mode == 'MANUAL' and cloud_active_lane:
+                    with phase_lock:
+                        local_active_lane = PHASE_ORDER[current_phase_idx]
+                    if cloud_active_lane in LANE_NAMES and cloud_active_lane != local_active_lane:
+                        print(f"[STAP] 🔄 Cloud Sync: Overriding green lane to {cloud_active_lane}")
+                        with phase_lock:
+                            current_phase_idx = PHASE_ORDER.index(cloud_active_lane)
+                            phase_state = 'GREEN'
+                            green_start_time = time.time()
+                        send_to_esp32(f'MANUAL_LIGHT:{cloud_active_lane},GREEN')
         except Exception as e:
             print(f"[STAP] ⚠️ Real-time sync to Cloud Hub failed: {e}")
         time.sleep(1.0)
