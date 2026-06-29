@@ -13,7 +13,8 @@ export type SidebarTab =
   | "DATA_REQUEST"
   | "INCIDENT_REPORT"
   | "SETTINGS"
-  | "EMAILS";
+  | "EMAILS"
+  | "LEGAL";
 
 interface SidebarProps {
   activeTab: SidebarTab;
@@ -149,6 +150,34 @@ export default function Sidebar({ activeTab, onTabChange, isAdmin, onLoginClick 
 
       {/* Footer Details */}
       <div className="border-t border-white/5">
+        {/* Legal Links section below the main navigation */}
+        <div className="px-6 py-4 space-y-2.5">
+          <button 
+            onClick={() => onTabChange("LEGAL")}
+            className={`block text-[9px] font-black uppercase tracking-widest transition-colors ${
+              activeTab === "LEGAL" ? "text-white" : "text-slate-300/60 hover:text-white"
+            }`}
+          >
+            Compliance & Legal
+          </button>
+          <div className="flex flex-col gap-1.5">
+            <button 
+              onClick={() => onTabChange("LEGAL")}
+              className="text-[10px] font-medium text-slate-300/60 hover:text-white text-left transition-colors flex items-center gap-2 group"
+            >
+              <div className="h-1 w-1 rounded-full bg-slate-300/20 group-hover:bg-blue-400 transition-colors"></div>
+              Privacy Policy
+            </button>
+            <button 
+              onClick={() => onTabChange("LEGAL")}
+              className="text-[10px] font-medium text-slate-300/60 hover:text-white text-left transition-colors flex items-center gap-2 group"
+            >
+              <div className="h-1 w-1 rounded-full bg-slate-300/20 group-hover:bg-blue-400 transition-colors"></div>
+              Terms of Service
+            </button>
+          </div>
+        </div>
+
         {!isAdmin ? (
           <button
             onClick={onLoginClick}
