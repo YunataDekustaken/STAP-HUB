@@ -470,9 +470,13 @@ export default function App() {
       snapshot.forEach((d) => {
         list.push({ id: d.id, ...d.data() } as FootageRequest);
       });
-      if (list.length > 0) {
-        setFootageRequests(list);
-      }
+      const merged = [...list];
+      INITIAL_FOOTAGE_REQUESTS.forEach((seed) => {
+        if (!merged.some((item) => item.id === seed.id)) {
+          merged.push(seed);
+        }
+      });
+      setFootageRequests(merged);
       setFirebaseSyncError(null);
     }, (error) => {
       console.error("Firestore Footage Sync Error:", error);
@@ -485,9 +489,13 @@ export default function App() {
       snapshot.forEach((d) => {
         list.push({ id: d.id, ...d.data() } as IncidentReport);
       });
-      if (list.length > 0) {
-        setIncidentReports(list);
-      }
+      const merged = [...list];
+      INITIAL_INCIDENT_REPORTS.forEach((seed) => {
+        if (!merged.some((item) => item.id === seed.id)) {
+          merged.push(seed);
+        }
+      });
+      setIncidentReports(merged);
       setFirebaseSyncError(null);
     }, (error) => {
       console.error("Firestore Incident Sync Error:", error);
@@ -500,9 +508,13 @@ export default function App() {
       snapshot.forEach((d) => {
         list.push({ id: d.id, ...d.data() } as Announcement);
       });
-      if (list.length > 0) {
-        setAnnouncements(list);
-      }
+      const merged = [...list];
+      INITIAL_ANNOUNCEMENTS.forEach((seed) => {
+        if (!merged.some((item) => item.id === seed.id)) {
+          merged.push(seed);
+        }
+      });
+      setAnnouncements(merged);
       setFirebaseSyncError(null);
     }, (error) => {
       console.error("Firestore Announcements Sync Error:", error);
@@ -515,9 +527,19 @@ export default function App() {
       snapshot.forEach((d) => {
         list.push({ id: d.id, ...d.data() });
       });
-      if (list.length > 0) {
-        setReportRequests(list);
-      }
+      const merged = [...list];
+      INITIAL_REPORT_REQUESTS.forEach((seed) => {
+        if (!merged.some((item) => item.id === seed.id)) {
+          merged.push(seed);
+        }
+      });
+      // Sort client-side by createdAt desc
+      merged.sort((a: any, b: any) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+      });
+      setReportRequests(merged);
       setFirebaseSyncError(null);
     }, (error) => {
       console.error("Firestore Report Requests Sync Error:", error);
@@ -625,18 +647,36 @@ export default function App() {
 
       // 1. Prioritize querying local Python controller directly if nodeIp is set
       if (nodeIp && nodeIp.trim()) {
-        try {
-          const isHttps = window.location.protocol === "https:";
-          let controllerUrl = `http://${nodeIp.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
-          
-          // If we are on HTTPS, we must use the server-side proxy to avoid Mixed Content errors
-          if (isHttps) {
-            controllerUrl = `/api/v1/proxy-python-status?url=${encodeURIComponent(controllerUrl)}`;
-          }
-          
-          const controllerFetch = fetch(controllerUrl, { 
-            mode: isHttps ? "same-origin" : "cors" 
-          });
+        const isHttps = window.location.protocol === "https:";
+        const trimmedIp = nodeIp.trim().toLowerCase();
+        const isPrivateIp = 
+          trimmedIp === "localhost" || 
+          trimmedIp === "127.0.0.1" || 
+          trimmedIp.startsWith("192.168.") || 
+          trimmedIp.startsWith("10.") || 
+          (trimmedIp.startsWith("172.") && (() => {
+            const parts = trimmedIp.split(".");
+            if (parts.length >= 2) {
+              const secondOctet = parseInt(parts[1], 10);
+              return secondOctet >= 16 && secondOctet <= 31;
+            }
+            return false;
+          })());
+
+        // Skip direct local querying if we are on HTTPS and node IP is a private LAN address,
+        // because the cloud proxy server cannot route to a private local IP. This avoids massive timeouts.
+        if (!(isHttps && isPrivateIp)) {
+          try {
+            let controllerUrl = `http://${nodeIp.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
+            
+            // If we are on HTTPS, we must use the server-side proxy to avoid Mixed Content errors
+            if (isHttps) {
+              controllerUrl = `/api/v1/proxy-python-status?url=${encodeURIComponent(controllerUrl)}`;
+            }
+            
+            const controllerFetch = fetch(controllerUrl, { 
+              mode: isHttps ? "same-origin" : "cors" 
+            });
           const timeoutPromise = new Promise<Response>((_, reject) =>
             setTimeout(() => reject(new Error("Local fetch timeout")), 1200)
           );
@@ -715,6 +755,7 @@ export default function App() {
           // Fall back gracefully to cloud check if we cannot reach local IP
           // Silencing debug logs as per user request to avoid notification clutter
           console.debug("Polling local node paused: backend offline.");
+        }
         }
       }
 
@@ -1177,12 +1218,26 @@ export default function App() {
                   if (nodeIp) {
                     try {
                       const pythonMode = m?.toLowerCase() || "auto";
-                      await fetch(`http://${nodeIp.trim()}:5000/control/mode`, {
-                        method: "POST",
-                        mode: "cors",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ mode: pythonMode })
-                      });
+                      const isHttps = window.location.protocol === "https:";
+                      const targetUrl = `http://${nodeIp.trim()}:5000/control/mode`;
+                      
+                      if (isHttps) {
+                        await fetch("/api/v1/proxy-python-control", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            targetUrl,
+                            body: { mode: pythonMode }
+                          })
+                        });
+                      } else {
+                        await fetch(targetUrl, {
+                          method: "POST",
+                          mode: "cors",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ mode: pythonMode })
+                        });
+                      }
                     } catch (e) {
                       console.warn("Could not sync directly with local STAP node IP. Will sync via cloud.", e);
                     }
@@ -1217,21 +1272,47 @@ export default function App() {
                   // 2. Sync to local physical Python controller
                   if (nodeIp) {
                     try {
+                      const isHttps = window.location.protocol === "https:";
+                      
                       // Ensure manual mode is selected
-                      await fetch(`http://${nodeIp.trim()}:5000/control/mode`, {
-                        method: "POST",
-                        mode: "cors",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ mode: "manual" })
-                      });
+                      const modeUrl = `http://${nodeIp.trim()}:5000/control/mode`;
+                      if (isHttps) {
+                        await fetch("/api/v1/proxy-python-control", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            targetUrl: modeUrl,
+                            body: { mode: "manual" }
+                          })
+                        });
+                      } else {
+                        await fetch(modeUrl, {
+                          method: "POST",
+                          mode: "cors",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ mode: "manual" })
+                        });
+                      }
 
                       // Trigger light override
-                      await fetch(`http://${nodeIp.trim()}:5000/control/light`, {
-                        method: "POST",
-                        mode: "cors",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ lane, state: (light || "RED").toLowerCase() })
-                      });
+                      const lightUrl = `http://${nodeIp.trim()}:5000/control/light`;
+                      if (isHttps) {
+                        await fetch("/api/v1/proxy-python-control", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            targetUrl: lightUrl,
+                            body: { lane, state: (light || "RED").toLowerCase() }
+                          })
+                        });
+                      } else {
+                        await fetch(lightUrl, {
+                          method: "POST",
+                          mode: "cors",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ lane, state: (light || "RED").toLowerCase() })
+                        });
+                      }
                     } catch (e) {
                       console.warn("Could not directly contact local STAP node:", e);
                     }

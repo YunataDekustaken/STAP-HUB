@@ -750,6 +750,39 @@ app.get("/api/v1/proxy-python-status", asyncHandler(async (req: Request, res: Re
   }
 }));
 
+// --- API ROUTE: Proxy for Insecure Python Control POST commands (Bypasses HTTPS Mixed Content) ---
+app.post("/api/v1/proxy-python-control", asyncHandler(async (req: Request, res: Response) => {
+  const { targetUrl, body } = req.body;
+  if (!targetUrl) return res.status(400).json({ success: false, error: "Missing 'targetUrl' parameter." });
+
+  try {
+    // Only allow control/mode or control/light endpoints to prevent abuse
+    if (!targetUrl.includes("/control/")) {
+      return res.status(403).json({ success: false, error: "Only control endpoint proxying is permitted." });
+    }
+
+    const response = await fetch(targetUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(3000)
+    });
+
+    if (!response.ok) throw new Error(`Target returned ${response.status}`);
+    
+    const contentType = response.headers.get("content-type");
+    let responseData;
+    if (contentType && contentType.includes("application/json")) {
+      responseData = await response.json();
+    } else {
+      responseData = { text: await response.text() };
+    }
+    res.json(responseData);
+  } catch (err: any) {
+    res.status(502).json({ success: false, error: `Control proxy failed: ${err.message}` });
+  }
+}));
+
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "";
 
 // --- API ROUTE: Gmail - Send Report with Attachment ---

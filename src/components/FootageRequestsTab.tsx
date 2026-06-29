@@ -45,39 +45,39 @@ export default function FootageRequestsTab({ requests, onUpdateRequestStatus, re
   const [certifiedSubTab, setCertifiedSubTab] = useState<"PENDING" | "APPROVED" | "REJECTED">("PENDING");
 
   // Sync propReportRequests if offline
+  // Real-time synchronization of Certified Report Requests
   useEffect(() => {
-    const { db } = getFirebaseInstances();
-    if (!db && propReportRequests) {
+    if (propReportRequests) {
       setReportRequests(propReportRequests);
     }
   }, [propReportRequests]);
 
-  // Real-time synchronization of Certified Report Requests & Ledgers
+  // Real-time synchronization of Cloud & Local Ledgers
   useEffect(() => {
     const { db } = getFirebaseInstances();
-    if (!db) return;
+    
+    let unsubLedger = () => {};
+    if (db) {
+      // Sync Cloud Ledgers without server-side orderBy to avoid missing index errors
+      const ledgerQ = collection(db, "ledgers");
+      unsubLedger = onSnapshot(ledgerQ, (snapshot) => {
+        const docs = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        // Sort client-side by uploadedAt descending
+        docs.sort((a: any, b: any) => {
+          const dateA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
+          const dateB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
+          return dateB - dateA;
+        });
+        setCloudLedgers(docs);
+      }, (error) => {
+        console.error("FootageRequestsTab: ledgers sync error:", error);
+      });
+    }
 
-    // 1. Sync Report Requests
-    const reportQ = query(collection(db, "report_requests"), orderBy("createdAt", "desc"));
-    const unsubReport = onSnapshot(reportQ, (snapshot) => {
-      const docs = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setReportRequests(docs);
-    });
-
-    // 2. Sync Cloud Ledgers
-    const ledgerQ = query(collection(db, "ledgers"), orderBy("uploadedAt", "desc"));
-    const unsubLedger = onSnapshot(ledgerQ, (snapshot) => {
-      const docs = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setCloudLedgers(docs);
-    });
-
-    // 3. Fetch Local Ledgers
+    // Fetch Local Ledgers
     const fetchLocalLedgers = async () => {
       try {
         const res = await fetch("/api/v1/ledgers");
@@ -94,7 +94,6 @@ export default function FootageRequestsTab({ requests, onUpdateRequestStatus, re
     fetchLocalLedgers();
 
     return () => {
-      unsubReport();
       unsubLedger();
     };
   }, []);
