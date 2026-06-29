@@ -1,16 +1,11 @@
 import React, { useState } from "react";
 import { ShieldCheck, FileText, Scale, Lock, Eye, ChevronRight } from "lucide-react";
 
-interface LegalTabProps {
-  standalone?: boolean;
-  defaultSection?: "PRIVACY" | "TERMS";
-}
-
-export default function LegalTab({ standalone = false, defaultSection = "PRIVACY" }: LegalTabProps) {
-  const [activeSection, setActiveSection] = useState<"PRIVACY" | "TERMS">(defaultSection);
+export default function LegalTab() {
+  const [activeSection, setActiveSection] = useState<"PRIVACY" | "TERMS">("PRIVACY");
 
   return (
-    <div className={`max-w-4xl mx-auto space-y-6 ${standalone ? "py-12 px-4" : "pb-12"}`} id="legal-tab-view">
+    <div className="max-w-4xl mx-auto space-y-6 pb-12" id="legal-tab-view">
       {/* Header */}
       <div className="bg-slate-900 rounded-3xl p-8 text-white shadow-xl border border-slate-800">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">

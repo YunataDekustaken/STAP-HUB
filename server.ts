@@ -1168,14 +1168,6 @@ app.post("/api/v1/upload-manual-ledger", asyncHandler(async (req: Request, res: 
   return res.status(503).json({ success: false, error: "Cloud database features are currently offline." });
 }));
 
-// Legal Routes for standalone access (served as index.html for client routing)
-app.get(["/privacy-policy", "/terms-of-service"], (req, res) => {
-  const distPath = path.join(process.cwd(), "dist");
-  // Check if dist/index.html exists, otherwise we are in dev and it should be handled by vite
-  // But this route is only needed if not handled by vite
-  res.sendFile(path.join(distPath, "index.html"));
-});
-
 // Configure Vite or serve static files
 async function configureFrontend() {
   if (process.env.NODE_ENV !== "production") {
