@@ -1,19 +1,27 @@
 import React, { useState, useEffect } from "react";
-import { Mail, ShieldCheck, RefreshCw, AlertCircle, CheckCircle2, LogOut } from "lucide-react";
+import { Mail, ShieldCheck, RefreshCw, AlertCircle, CheckCircle2, LogOut, HardDrive } from "lucide-react";
 
 export default function AdminSettingsTab() {
   const [notification, setNotification] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [status, setStatus] = useState<{ connected: boolean; email?: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [driveFolderId, setDriveFolderId] = useState("");
+  const [isSavingDrive, setIsSavingDrive] = useState(false);
 
   const fetchStatus = async () => {
     setIsLoading(true);
     try {
       const res = await fetch("/api/auth/google/status");
-      
       const authData = await res.json();
       if (authData.success) {
         setStatus({ connected: authData.connected, email: authData.email });
+      }
+
+      // Fetch drive config
+      const driveRes = await fetch("/api/google/drive-config");
+      const driveData = await driveRes.json();
+      if (driveData.success) {
+        setDriveFolderId(driveData.folderId || "");
       }
     } catch (err) {
       console.error("Failed to fetch settings:", err);
@@ -25,6 +33,27 @@ export default function AdminSettingsTab() {
   useEffect(() => {
     fetchStatus();
   }, []);
+
+  const handleSaveDriveConfig = async () => {
+    setIsSavingDrive(true);
+    try {
+      const res = await fetch("/api/google/drive-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId: driveFolderId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showNotification("Cloud archive path updated successfully.");
+      } else {
+        showNotification(data.error || "Failed to update archive path.", "error");
+      }
+    } catch (err: any) {
+      showNotification(err.message || "Failed to update archive path.", "error");
+    } finally {
+      setIsSavingDrive(false);
+    }
+  };
 
   const showNotification = (message: string, type: "success" | "error" = "success") => {
     setNotification({ message, type });
@@ -135,6 +164,41 @@ export default function AdminSettingsTab() {
             Connect Google Account
           </button>
         )}
+
+        {/* Drive Configuration Section */}
+        <div className="bg-slate-900/40 rounded-2xl p-6 border border-slate-800/50 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-500/10 rounded-lg">
+              <HardDrive className="h-4 w-4 text-blue-400" />
+            </div>
+            <h3 className="text-xs font-black text-white uppercase tracking-wider">Cloud Archive Path</h3>
+          </div>
+          
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Google Drive Folder ID</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Enter Folder ID (e.g. 1a2b3c...)"
+                  value={driveFolderId}
+                  onChange={(e) => setDriveFolderId(e.target.value)}
+                  className="flex-1 bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-blue-500/50 transition-all font-mono"
+                />
+                <button
+                  onClick={handleSaveDriveConfig}
+                  disabled={isSavingDrive}
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-blue-600/20"
+                >
+                  {isSavingDrive ? <RefreshCw className="h-3 w-3 animate-spin" /> : "Save"}
+                </button>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-500 font-medium leading-relaxed italic">
+              Leave blank to browse all root files. Enter a specific Folder ID to isolate the Cloud Archive view to a specific departmental directory.
+            </p>
+          </div>
+        </div>
 
         <div className="bg-slate-900/50 rounded-2xl p-6 border border-slate-800/50 space-y-4">
           <div className="flex items-center gap-2 text-blue-400">

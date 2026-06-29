@@ -142,6 +142,34 @@ app.get("/api/auth/google/status", async (req: Request, res: Response) => {
   }
 });
 
+// --- API ROUTE: Google Drive - Configuration ---
+app.get("/api/google/drive-config", async (req: Request, res: Response) => {
+  try {
+    const snap = await firestoreREST("GET", "system/google_drive_config");
+    if (snap && snap.fields?.folderId?.stringValue) {
+      return res.json({ success: true, folderId: snap.fields.folderId.stringValue });
+    }
+    res.json({ success: true, folderId: "" });
+  } catch (err: any) {
+    res.json({ success: true, folderId: "" });
+  }
+});
+
+app.post("/api/google/drive-config", async (req: Request, res: Response) => {
+  try {
+    const { folderId } = req.body;
+    await firestoreREST("PATCH", "system/google_drive_config", {
+      fields: {
+        folderId: { stringValue: folderId || "" },
+        updatedAt: { stringValue: new Date().toISOString() }
+      }
+    });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // --- API ROUTE: Weather Configuration & Data ---
 app.get(["/api/weather/config", "/weather/config"], async (req: Request, res: Response) => {
   try {
@@ -271,9 +299,26 @@ app.get("/api/google/drive-files", async (req: Request, res: Response) => {
     const auth = await getAutoRefreshingAuthClient();
     if (!auth) throw new Error("Google Authentication not configured.");
     
+    // Get folder ID from Firestore
+    let folderId = "";
+    try {
+      const snap = await firestoreREST("GET", "system/google_drive_config");
+      if (snap && snap.fields?.folderId?.stringValue) {
+        folderId = snap.fields.folderId.stringValue;
+      }
+    } catch (e) {
+      // Default to root or empty
+    }
+
     const drive = google.drive({ version: "v3", auth });
+    
+    let query = "trashed = false";
+    if (folderId && folderId.trim()) {
+      query = `'${folderId.trim()}' in parents and trashed = false`;
+    }
+
     const response = await drive.files.list({
-      q: "trashed = false",
+      q: query,
       fields: "files(id, name, mimeType, webViewLink, thumbnailLink, size, createdTime, iconLink)",
       orderBy: "folder,name",
       pageSize: 50
