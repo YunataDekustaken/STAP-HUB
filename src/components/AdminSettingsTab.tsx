@@ -9,12 +9,22 @@ export default function AdminSettingsTab({}: AdminSettingsTabProps) {
   const handleConnectGoogle = async () => {
     try {
       const res = await fetch("/api/auth/google/url");
-      const { url } = await res.json();
-      window.open(url, "google_auth_popup", "width=600,height=700");
-    } catch (err) {
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Server returned ${res.status}: ${errorText.substring(0, 50)}`);
+      }
+      
+      const data = await res.json();
+      if (data.success && data.url) {
+        window.open(data.url, "google_auth_popup", "width=600,height=700");
+      } else {
+        setNotification(data.error || "Google Auth configuration is incomplete.");
+        setTimeout(() => setNotification(null), 5000);
+      }
+    } catch (err: any) {
       console.error("Failed to get Google Auth URL:", err);
-      setNotification("Failed to initiate Google connection.");
-      setTimeout(() => setNotification(null), 3000);
+      setNotification(`Error: ${err.message || "Failed to initiate Google connection."}`);
+      setTimeout(() => setNotification(null), 5000);
     }
   };
 

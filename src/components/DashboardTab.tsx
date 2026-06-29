@@ -178,7 +178,17 @@ export default function DashboardTab({
                   Camera Stream Blocked? (Mixed HTTPS/HTTP Content Warning)
                 </span>
                 <p className="text-amber-800 leading-normal text-[11px]">
-                  The webapp console is loaded securely over <code className="bg-slate-900 text-white px-1 py-0.5 rounded font-mono">HTTPS</code>, but your local Python camera streams are served over <code className="bg-slate-900 text-white px-1 py-0.5 rounded font-mono">HTTP</code> ({pythonStreamUrl}). Modern browsers block this insecure media by default.
+                  <div className="flex items-center gap-2 text-rose-600 mb-2">
+                    <AlertTriangle className="h-5 w-5" />
+                    <span className="font-black uppercase tracking-widest text-xs">Mixed Content Security Block</span>
+                  </div>
+                  The webapp console is loaded securely over <code className="bg-slate-900 text-white px-1 py-0.5 rounded font-mono">HTTPS</code>, but your local Python camera streams are currently served over <code className="bg-slate-900 text-white px-1 py-0.5 rounded font-mono">HTTP</code> ({pythonStreamUrl}). 
+                  <br /><br />
+                  Modern browsers block these insecure streams for your safety. To view live footage on this secure domain, you must either:
+                  <ul className="list-disc ml-5 mt-2 space-y-1">
+                    <li>Expose your Python node via an <span className="font-bold">HTTPS Tunnel</span> (e.g., Ngrok or Bore).</li>
+                    <li>Or, manually <span className="font-bold underline decoration-rose-500">Enable Insecure Content</span> in your browser site settings for this domain.</li>
+                  </ul>
                 </p>
                 <p className="text-amber-950 font-bold text-[11px]">
                   To permit local hardware video playback:

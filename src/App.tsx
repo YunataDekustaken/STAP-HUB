@@ -348,7 +348,7 @@ export default function App() {
       }
     } else {
       // If their account was removed from the registry, automatically trigger logout
-      if (currentUser.email.toLowerCase()?.trim() !== "stap.est2526@gmail.com") {
+      if (currentUser?.email?.toLowerCase()?.trim() !== "stap.est2526@gmail.com") {
         handleLogout();
       }
     }
@@ -442,7 +442,7 @@ export default function App() {
       });
 
       docs.forEach((u) => {
-        const lowerEmail = u.email?.toLowerCase();
+        const lowerEmail = u.email?.toLowerCase() || "";
         if (lowerEmail) {
           if (seenEmails.has(lowerEmail)) {
             duplicatesToDelete.push(u.id);
@@ -1001,7 +1001,7 @@ export default function App() {
                   // 2. Dispatch REST command to physical local Python node
                   if (nodeIp) {
                     try {
-                      const pythonMode = m.toLowerCase();
+                      const pythonMode = m?.toLowerCase() || "auto";
                       await fetch(`http://${nodeIp.trim()}:5000/control/mode`, {
                         method: "POST",
                         mode: "cors",
@@ -1055,7 +1055,7 @@ export default function App() {
                         method: "POST",
                         mode: "cors",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ lane, state: light.toLowerCase() })
+                        body: JSON.stringify({ lane, state: (light || "RED").toLowerCase() })
                       });
                     } catch (e) {
                       console.warn("Could not directly contact local STAP node:", e);
@@ -1225,19 +1225,7 @@ export default function App() {
         </div>
       )}
       
-      {/* Mixed Content bypass element - forces secure cloud URL alignment in local Python controller */}
-      {nodeIp && nodeIp.trim() && (
-        <img 
-          src={`http://${nodeIp.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}&t=${mixedContentTrigger}`}
-          style={{ display: "none", width: 1, height: 1 }}
-          alt=""
-          referrerPolicy="no-referrer"
-          onError={() => {
-            // No-op: Endpoint returns JSON instead of an image, which triggers onError but GET was sent!
-          }}
-        />
-      )}
-
+      {/* Removed insecure heartbeat hack to prevent Mixed Content errors. Connection status is now derived from the primary STAP database. */}
     </div>
   );
 }

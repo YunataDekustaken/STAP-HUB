@@ -152,13 +152,16 @@ export default function ControlTab({
     setNodeIp(inputValue);
     
     try {
-      const controllerUrl = `http://${inputValue.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
-      const pingPromise = fetch(controllerUrl, { mode: "cors" });
+      const targetUrl = `http://${inputValue.trim()}:5000/status?hub_origin=${encodeURIComponent(window.location.origin)}`;
+      const proxyUrl = `/api/v1/proxy-python-status?url=${encodeURIComponent(targetUrl)}`;
+      const pingPromise = fetch(proxyUrl);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Timeout")), 1500)
+        setTimeout(() => reject(new Error("Timeout")), 3000)
       );
       
-      await Promise.race([pingPromise, timeoutPromise]);
+      const res = await Promise.race([pingPromise, timeoutPromise]) as Response;
+      if (!res.ok) throw new Error("Proxy response not OK");
+      
       setIsConnecting(false);
       setIsNodeConnected(true);
     } catch (err) {

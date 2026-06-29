@@ -717,21 +717,53 @@ app.post("/api/v1/control", asyncHandler(async (req: Request, res: Response) => 
   res.json({ success: true, state: systemState });
 }));
 
+// --- API ROUTE: Proxy for Insecure Python Stream Status (Bypasses HTTPS Mixed Content) ---
+app.get("/api/v1/proxy-python-status", asyncHandler(async (req: Request, res: Response) => {
+  const targetUrl = req.query.url as string;
+  if (!targetUrl) return res.status(400).json({ success: false, error: "Missing 'url' parameter." });
+
+  try {
+    // Only allow status endpoints for proxying to prevent open proxy abuse
+    if (!targetUrl.includes("/status")) {
+      return res.status(403).json({ success: false, error: "Only status endpoint proxying is permitted." });
+    }
+
+    const response = await fetch(targetUrl, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error(`Target returned ${response.status}`);
+    
+    const data = await response.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(502).json({ success: false, error: `Proxy failed: ${err.message}` });
+  }
+}));
+
 // --- API ROUTE: Google Auth - Get URL ---
 app.get("/api/auth/google/url", (req: Request, res: Response) => {
-  const scopes = [
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/userinfo.email"
-  ];
+  try {
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+      return res.status(500).json({ 
+        success: false, 
+        error: "Google OAuth Credentials missing in environment variables (GOOGLE_CLIENT_ID/SECRET)." 
+      });
+    }
 
-  const url = oauth2ClientBase.generateAuthUrl({
-    access_type: "offline",
-    scope: scopes,
-    prompt: "consent"
-  });
+    const scopes = [
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/userinfo.email"
+    ];
 
-  res.json({ url });
+    const url = oauth2ClientBase.generateAuthUrl({
+      access_type: "offline",
+      scope: scopes,
+      prompt: "consent"
+    });
+
+    res.json({ success: true, url });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // --- API ROUTE: Google Auth - Callback ---

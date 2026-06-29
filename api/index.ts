@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import dotenv from "dotenv";
 import path from "path";
+import { google } from "googleapis";
 
 dotenv.config();
 
@@ -19,6 +20,60 @@ app.use((req, res, next) => {
 const AUTHORIZATION_TOKEN = "node_alpha_J7FVxdRBqwCBWQSdiKBN742lMHuEPX5A";
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "stap-hub";
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
+
+// --- GOOGLE WORKSPACE API SETUP (Synced with server.ts) ---
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN || "";
+const APP_URL = process.env.APP_URL || "https://stap-hub.vercel.app";
+
+const oauth2ClientBase = new google.auth.OAuth2(
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  `${APP_URL}/api/auth/google/callback`
+);
+
+async function getAutoRefreshingAuthClient() {
+  // 1. Try to fetch refresh token from Firestore REST
+  let refreshToken = GOOGLE_REFRESH_TOKEN;
+  try {
+    const authSnap = await firestoreREST("GET", "system/google_auth");
+    if (authSnap && authSnap.fields?.refresh_token?.stringValue) {
+      refreshToken = authSnap.fields.refresh_token.stringValue;
+    }
+  } catch (e) {
+    // Fallback to env
+  }
+
+  if (!refreshToken) {
+    throw new Error("Google Workspace not connected. Please connect your account in Admin Settings.");
+  }
+
+  const authClient = new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    `${APP_URL}/api/auth/google/callback`
+  );
+
+  authClient.setCredentials({ refresh_token: refreshToken });
+
+  authClient.on("tokens", async (newTokens) => {
+    if (newTokens.refresh_token) {
+      try {
+        await firestoreREST("PATCH", "system/google_auth", {
+          fields: {
+            refresh_token: { stringValue: newTokens.refresh_token },
+            updatedAt: { stringValue: new Date().toISOString() }
+          }
+        });
+      } catch (err) {
+        console.error("Failed to update new refresh token in Firestore REST:", err);
+      }
+    }
+  });
+
+  return authClient;
+}
 
 // Helper to interact with Firestore via pure, stateless HTTP REST API
 async function firestoreREST(method: "GET" | "PATCH", documentPath: string, data?: any) {
@@ -40,6 +95,103 @@ async function firestoreREST(method: "GET" | "PATCH", documentPath: string, data
   }
   return res.json();
 }
+
+// --- API ROUTE: Proxy for Insecure Python Stream Status (Bypasses HTTPS Mixed Content) ---
+app.get("/api/v1/proxy-python-status", async (req: Request, res: Response) => {
+  const targetUrl = req.query.url as string;
+  if (!targetUrl) return res.status(400).json({ success: false, error: "Missing 'url' parameter." });
+
+  try {
+    if (!targetUrl.includes("/status")) {
+      return res.status(403).json({ success: false, error: "Only status endpoint proxying is permitted." });
+    }
+
+    const response = await fetch(targetUrl, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error(`Target returned ${response.status}`);
+    
+    const data = await response.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(502).json({ success: false, error: `Proxy failed: ${err.message}` });
+  }
+});
+
+// --- API ROUTE: Google Auth - Get URL ---
+app.get("/api/auth/google/url", (req: Request, res: Response) => {
+  try {
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+      return res.status(500).json({ 
+        success: false, 
+        error: "Google OAuth Credentials missing in environment variables (GOOGLE_CLIENT_ID/SECRET)." 
+      });
+    }
+
+    const scopes = [
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/userinfo.email"
+    ];
+
+    const url = oauth2ClientBase.generateAuthUrl({
+      access_type: "offline",
+      scope: scopes,
+      prompt: "consent"
+    });
+
+    res.json({ success: true, url });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- API ROUTE: Google Auth - Callback ---
+app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
+  try {
+    const { code } = req.query;
+    if (!code) return res.status(400).send("No code provided.");
+
+    const { tokens } = await oauth2ClientBase.getToken(code as string);
+    const refreshToken = tokens.refresh_token;
+
+    if (refreshToken) {
+      await firestoreREST("PATCH", "system/google_auth", {
+        fields: {
+          refresh_token: { stringValue: refreshToken },
+          updatedAt: { stringValue: new Date().toISOString() }
+        }
+      });
+    }
+
+    res.send(`
+      <html>
+        <body style="font-family: sans-serif; padding: 40px; line-height: 1.6;">
+          <h2 style="color: #22C55E;">✓ Google Account Connected!</h2>
+          <p>You have successfully authorized the application.</p>
+          <button onclick="window.close()" style="padding: 10px 20px; background: #1E293B; color: white; border: none; border-radius: 8px; cursor: pointer;">Close Window</button>
+        </body>
+      </html>
+    `);
+  } catch (err: any) {
+    res.status(500).send(`Auth Callback Error: ${err.message}`);
+  }
+});
+
+// --- API ROUTE: Google Drive - List Files ---
+app.get("/api/google/drive-files", async (req: Request, res: Response) => {
+  try {
+    const auth = await getAutoRefreshingAuthClient();
+    const drive = google.drive({ version: "v3", auth });
+    const response = await drive.files.list({
+      q: "trashed = false",
+      fields: "files(id, name, mimeType, webViewLink, thumbnailLink, size, createdTime, iconLink)",
+      orderBy: "folder,name",
+      pageSize: 50
+    });
+    res.json({ success: true, files: response.data.files });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Validate structure of uploaded or edited CSV ledger files
 function validateCSV(csvText: string): { valid: boolean; error?: string } {
