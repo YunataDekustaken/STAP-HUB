@@ -79,22 +79,143 @@ export const generateTrafficReport = (
     headStyles: { fillColor: [78, 98, 144] }
   });
 
+  // Session Volume Comparison Trend (ONLY if multiple sessions exist)
+  if (data.length > 1) {
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.setTextColor(30, 41, 59);
+    doc.text("Session Volume Comparison Trend", 14, 22);
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text("Unique vehicle counts across recorded STAP nodes / sessions (showing last 10)", 14, 27);
+
+    const trendY = 40;
+    // Get the last 10 sessions to keep chart clean and uncrowded
+    const trendData = data.slice(-10);
+    const maxSessionCount = Math.max(...trendData.map(p => {
+      if (p.finalSummary?.corridorTotals) return p.finalSummary.corridorTotals.grandUniqueCount;
+      if (p.snapshots.length > 0) return p.snapshots[p.snapshots.length - 1].intersectionSum;
+      return 0;
+    }), 1);
+
+    const trendBarMaxHeight = 45;
+    const trendBarWidth = Math.max(10, Math.min(25, 120 / trendData.length));
+    const trendSpacing = Math.max(4, Math.min(10, 40 / trendData.length));
+    
+    // Draw horizontal grid lines for scale
+    doc.setDrawColor(241, 245, 249);
+    doc.setLineWidth(0.5);
+    for (let g = 0; g <= 4; g++) {
+      const gridVal = (maxSessionCount * (g / 4)).toFixed(0);
+      const gridY = trendY + trendBarMaxHeight - (g / 4) * trendBarMaxHeight;
+      doc.line(22, gridY, pageWidth - 14, gridY);
+      doc.setFontSize(6);
+      doc.setTextColor(148, 163, 184);
+      doc.text(parseInt(gridVal).toLocaleString(), 20, gridY + 1.5, { align: "right" });
+    }
+
+    // Y Axis line
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.75);
+    doc.line(22, trendY, 22, trendY + trendBarMaxHeight);
+    // X Axis line
+    doc.line(22, trendY + trendBarMaxHeight, pageWidth - 14, trendY + trendBarMaxHeight);
+
+    trendData.forEach((p, index) => {
+      const count = p.finalSummary?.corridorTotals?.grandUniqueCount || 
+                    (p.snapshots.length > 0 ? p.snapshots[p.snapshots.length - 1].intersectionSum : 0);
+      
+      const barHeight = (count / maxSessionCount) * trendBarMaxHeight;
+      const x = 28 + index * (trendBarWidth + trendSpacing);
+      
+      // Draw bar
+      doc.setFillColor(129, 140, 248); // Nice Indigo
+      doc.rect(x, trendY + trendBarMaxHeight - barHeight, trendBarWidth, barHeight, "F");
+
+      // Draw value on top of bar
+      doc.setFontSize(7);
+      doc.setTextColor(71, 85, 105);
+      doc.text(count.toLocaleString(), x + (trendBarWidth/2), trendY + trendBarMaxHeight - barHeight - 2, { align: "center" });
+
+      // Draw session label below X-axis
+      doc.setFontSize(6);
+      doc.setTextColor(100, 116, 139);
+      const dateStr = p.sessionStart && p.sessionStart !== "—" ? p.sessionStart.split(" ")[0] || "Session" : `Sess ${index + 1}`;
+      const timeStr = p.sessionStart && p.sessionStart !== "—" ? p.sessionStart.split(" ")[1] || "" : "";
+      doc.text(dateStr, x + (trendBarWidth/2), trendY + trendBarMaxHeight + 4, { align: "center" });
+      if (timeStr) {
+        doc.text(timeStr, x + (trendBarWidth/2), trendY + trendBarMaxHeight + 8, { align: "center" });
+      }
+    });
+  }
+
   // Vehicle Breakdown Table
   doc.addPage();
+  doc.setFontSize(14);
+  doc.setTextColor(30, 41, 59);
   doc.text("Vehicle Classification Breakdown", 14, 22);
   
   const vehicleRows = Object.entries(vehicleCounts).sort((a,b) => b[1]-a[1]).map(([type, count]) => [
     type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
     count.toLocaleString(),
-    `${((count / totalVehicles) * 100).toFixed(1)}%`
+    `${((count / (totalVehicles || 1)) * 100).toFixed(1)}%`
   ]);
 
   autoTable(doc, {
-    startY: 30,
+    startY: 28,
     head: [["Vehicle Type", "Count", "Percentage Share"]],
     body: vehicleRows,
     theme: 'grid',
     headStyles: { fillColor: [78, 98, 144] }
+  });
+
+  // Dynamic Horizontal Bar Chart for Vehicle Classification
+  const lastY = (doc as any).lastAutoTable.finalY || 100;
+  let chartY = lastY + 15;
+  
+  if (chartY + 80 > doc.internal.pageSize.getHeight() - 20) {
+    doc.addPage();
+    chartY = 25;
+  }
+  
+  doc.setFontSize(12);
+  doc.setTextColor(30, 41, 59);
+  doc.text("Traffic Distribution Visualizer", 14, chartY);
+  
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  doc.text("Relative volume and percentage share by vehicle class", 14, chartY + 5);
+  
+  chartY += 12;
+  
+  const sortedVehicles = Object.entries(vehicleCounts).sort((a, b) => b[1] - a[1]);
+  const maxCount = Math.max(...sortedVehicles.map(([, count]) => count), 1);
+  const barMaxWidth = 110;
+  const labelWidth = 40;
+  const rowHeight = 11;
+  
+  sortedVehicles.forEach(([type, count], index) => {
+    const y = chartY + (index * rowHeight);
+    
+    // Label
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    const cleanLabel = type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    doc.text(cleanLabel, 14, y + 5.5);
+    
+    // Background bar track
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14 + labelWidth, y, barMaxWidth, 7, "F");
+    
+    // Filled bar
+    const barWidth = (count / maxCount) * barMaxWidth;
+    doc.setFillColor(78, 98, 144);
+    doc.rect(14 + labelWidth, y, barWidth, 7, "F");
+    
+    // Value text
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(8);
+    doc.text(`${count.toLocaleString()} (${((count / (totalVehicles || 1)) * 100).toFixed(1)}%)`, 14 + labelWidth + barMaxWidth + 4, y + 5.5);
   });
 
   // Incident Summary if it was an incident report summary

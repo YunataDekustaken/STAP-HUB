@@ -104,10 +104,12 @@ export default function AnalyticsTab() {
 
   const [generatingReport, setGeneratingReport] = useState<boolean>(false);
   const [reportRequests, setReportRequests] = useState<any[]>([]);
+  const [reportExportFormat, setReportExportFormat] = useState<"pdf" | "csv">("pdf");
+  const [reportScope, setReportScope] = useState<"all" | "selected">("all");
   
   // Sharing State
   const [showShareModal, setShowShareModal] = useState<boolean>(false);
-  const [currentReport, setCurrentReport] = useState<{ doc: any; filename: string; type: string } | null>(null);
+  const [currentReport, setCurrentReport] = useState<{ doc?: any; csvData?: string; filename: string; type: string; previewUrl?: string } | null>(null);
   const [recipientEmail, setRecipientEmail] = useState<string>("");
   const [emailNote, setEmailNote] = useState<string>("");
   const [isSendingEmail, setIsSendingEmail] = useState<boolean>(false);
@@ -140,7 +142,42 @@ export default function AnalyticsTab() {
                               unifiedLedgers;
 
       if (ledgersToReport.length === 0) {
-        alert("No ledger data available to generate report.");
+        alert("No ledger data available to generate report. Please select at least one ledger.");
+        return;
+      }
+
+      if (reportExportFormat === "csv") {
+        // Generate and download Concatenated CSV
+        let combinedCSV = `=== STAP TRAFFIC AUDIT CONCATENATED RAW CSV REPORT ===\r\n`;
+        combinedCSV += `Report Type,${type}\r\n`;
+        combinedCSV += `Generated At,${new Date().toLocaleString()}\r\n`;
+        combinedCSV += `Data Source,${selectedLedgerIds.length > 0 ? `${selectedLedgerIds.length} Selected Ledgers` : "All Unified Ledgers"}\r\n\r\n`;
+        
+        ledgersToReport.forEach((l) => {
+          if (l.csvData) {
+            combinedCSV += `=== SOURCE LEDGER: ${l.filename} ===\r\n${l.csvData}\r\n\r\n`;
+          }
+        });
+        
+        const filename = `${type.replace(/\s+/g, "_")}_Export_${new Date().toISOString().split('T')[0]}.csv`;
+        
+        if (autoOpenShare) {
+          setCurrentReport({ csvData: combinedCSV, filename, type });
+          setShowShareModal(true);
+          setRecipientEmail("");
+          setEmailNote("");
+          setShareSuccess(null);
+        } else {
+          const blob = new Blob([combinedCSV], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.setAttribute("href", url);
+          link.setAttribute("download", filename);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        }
         return;
       }
 
@@ -151,7 +188,8 @@ export default function AnalyticsTab() {
 
       const metadata: ReportMetadata = {
         type,
-        dateRange: subTab === "daily" ? (selectedDay || "Current Selection") : "Complete History",
+        dateRange: subTab === "daily" ? (selectedDay || "Current Selection") : 
+                   selectedLedgerIds.length > 0 ? `${selectedLedgerIds.length} Selected Ledgers` : "Complete History",
         generatedBy: "System Administrator",
         certifiedBy: type === "Certified Traffic Log" ? "Officer-in-Charge" : undefined,
         refNumber: `STAP-${Date.now().toString(36).toUpperCase()}`
@@ -161,7 +199,9 @@ export default function AnalyticsTab() {
       const filename = `${type.replace(/\s+/g, "_")}_${new Date().toISOString().split('T')[0]}.pdf`;
 
       if (autoOpenShare) {
-        setCurrentReport({ doc, filename, type });
+        const pdfBlob = doc.output("blob");
+        const previewUrl = URL.createObjectURL(pdfBlob);
+        setCurrentReport({ doc, filename, type, previewUrl });
         setShowShareModal(true);
         setRecipientEmail("");
         setEmailNote("");
@@ -181,7 +221,12 @@ export default function AnalyticsTab() {
     setIsSendingEmail(true);
     setShareSuccess(null);
     try {
-      const pdfBase64 = currentReport.doc.output("datauristring").split(",")[1];
+      let attachmentBase64 = "";
+      if (currentReport.doc) {
+        attachmentBase64 = currentReport.doc.output("datauristring").split(",")[1];
+      } else if (currentReport.csvData) {
+        attachmentBase64 = btoa(unescape(encodeURIComponent(currentReport.csvData)));
+      }
       
       const res = await fetch("/api/gmail/send-report", {
         method: "POST",
@@ -200,7 +245,7 @@ export default function AnalyticsTab() {
               </p>
             </div>
           `,
-          attachment: pdfBase64,
+          attachment: attachmentBase64,
           filename: currentReport.filename
         })
       });
@@ -209,7 +254,7 @@ export default function AnalyticsTab() {
       if (data.success) {
         setShareSuccess("Email sent successfully!");
         setTimeout(() => {
-          setShowShareModal(false);
+          closeShareModal();
           setShareSuccess(null);
         }, 2000);
       } else {
@@ -231,15 +276,22 @@ export default function AnalyticsTab() {
     setIsSavingToDrive(true);
     setShareSuccess(null);
     try {
-      const pdfBase64 = currentReport.doc.output("datauristring").split(",")[1];
+      let contentBase64 = "";
+      let mimeType = "application/pdf";
+      if (currentReport.doc) {
+        contentBase64 = currentReport.doc.output("datauristring").split(",")[1];
+      } else if (currentReport.csvData) {
+        contentBase64 = btoa(unescape(encodeURIComponent(currentReport.csvData)));
+        mimeType = "text/csv";
+      }
       
       const res = await fetch("/api/google/drive-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           filename: currentReport.filename,
-          content: pdfBase64,
-          mimeType: "application/pdf",
+          content: contentBase64,
+          mimeType: mimeType,
           folderName: "STAP Reports"
         })
       });
@@ -682,6 +734,28 @@ export default function AnalyticsTab() {
     URL.revokeObjectURL(url);
   };
 
+  // Handle single ledger PDF download
+  const handleDownloadSingleLedgerPDF = (ledger: UnifiedLedger) => {
+    if (!ledger.csvData) {
+      alert("No data available to generate PDF.");
+      return;
+    }
+    try {
+      const parsed = parseTrafficCSV(ledger.csvData);
+      const metadata: ReportMetadata = {
+        type: "STAP Node Traffic Report",
+        dateRange: new Date(ledger.uploadedAt).toLocaleDateString(),
+        generatedBy: "STAP System Controller",
+        refNumber: `STAP-NODE-${ledger.filename.substring(0, 8).toUpperCase()}`
+      };
+      const doc = generateTrafficReport([parsed], metadata);
+      doc.save(ledger.filename.replace(/\.csv$/i, ".pdf"));
+    } catch (err: any) {
+      console.error("Failed to generate individual PDF:", err);
+      alert(`Could not generate PDF: ${err.message}`);
+    }
+  };
+
   // Save Edits
   const handleSaveEdit = async () => {
     if (!viewingLedger) return;
@@ -1107,6 +1181,31 @@ export default function AnalyticsTab() {
   // Current interactive snapshot details
   const currentSnapshot: Snapshot | undefined = parsedData.snapshots[selectedSnapshotIndex];
 
+  const closeShareModal = () => {
+    if (currentReport?.previewUrl) {
+      URL.revokeObjectURL(currentReport.previewUrl);
+    }
+    setShowShareModal(false);
+    setCurrentReport(null);
+  };
+
+  const downloadCurrentReport = () => {
+    if (!currentReport) return;
+    if (currentReport.doc) {
+      currentReport.doc.save(currentReport.filename);
+    } else if (currentReport.csvData) {
+      const blob = new Blob([currentReport.csvData], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", currentReport.filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
       
@@ -1454,7 +1553,7 @@ export default function AnalyticsTab() {
                             )}
                           </td>
                           <td className="px-5 py-3.5 text-right">
-                            <div className="inline-flex items-center gap-1">
+                            <div className="inline-flex items-center gap-1.5">
                               <button
                                 onClick={() => openViewer(ledger)}
                                 className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 rounded-lg transition-all"
@@ -1465,10 +1564,20 @@ export default function AnalyticsTab() {
                               
                               <button
                                 onClick={() => handleDownload(ledger)}
-                                className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-[#4E6290] rounded-lg transition-all"
+                                className="p-1.5 hover:bg-emerald-50 text-emerald-600 hover:text-emerald-700 rounded-lg transition-all flex items-center gap-0.5"
                                 title="Download CSV"
                               >
-                                <Download className="h-4 w-4" />
+                                <Download className="h-4.5 w-4.5" />
+                                <span className="text-[9px] font-black uppercase">CSV</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleDownloadSingleLedgerPDF(ledger)}
+                                className="p-1.5 hover:bg-rose-50 text-rose-600 hover:text-rose-700 rounded-lg transition-all flex items-center gap-0.5"
+                                title="Download PDF Report"
+                              >
+                                <FileText className="h-4.5 w-4.5" />
+                                <span className="text-[9px] font-black uppercase">PDF</span>
                               </button>
 
                               <button
@@ -1516,6 +1625,128 @@ export default function AnalyticsTab() {
             </div>
           </div>
 
+          {/* REPORTS CONFIGURATION BAR */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 shadow-xs">
+            <div className="lg:col-span-7 space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">1. Select Data Source Scope</h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Choose which STAP Node Ledgers are compiled into reports.</p>
+                </div>
+                <div className="flex bg-slate-100 p-1 rounded-xl shrink-0">
+                  <button
+                    onClick={() => {
+                      setReportScope("all");
+                      setSelectedLedgerIds([]); // Clear selection when switching to all
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                      selectedLedgerIds.length === 0
+                        ? "bg-white text-slate-800 shadow-xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    All History ({unifiedLedgers.length})
+                  </button>
+                  <button
+                    onClick={() => {
+                      setReportScope("selected");
+                      if (selectedLedgerIds.length === 0 && unifiedLedgers.length > 0) {
+                        setSelectedLedgerIds([unifiedLedgers[0].filename]); // Default to selecting the first ledger
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${
+                      selectedLedgerIds.length > 0
+                        ? "bg-white text-slate-800 shadow-xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    Custom ({selectedLedgerIds.length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Selector List if Custom Selection is active */}
+              {selectedLedgerIds.length > 0 && (
+                <div className="border border-slate-200 bg-white rounded-xl overflow-hidden animate-fadeIn">
+                  <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                    <span>Available Node Ledgers</span>
+                    <button 
+                      onClick={() => setSelectedLedgerIds([])}
+                      className="text-[#4E6290] hover:underline normal-case text-[9px] font-bold"
+                    >
+                      Clear Selection
+                    </button>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto divide-y divide-slate-100">
+                    {unifiedLedgers.map((l) => {
+                      const isChecked = selectedLedgerIds.includes(l.filename);
+                      return (
+                        <label 
+                          key={l.filename} 
+                          className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 cursor-pointer text-[11px] font-medium text-slate-600 transition-all"
+                        >
+                          <input 
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              if (isChecked) {
+                                setSelectedLedgerIds(selectedLedgerIds.filter(id => id !== l.filename));
+                              } else {
+                                setSelectedLedgerIds([...selectedLedgerIds, l.filename]);
+                              }
+                            }}
+                            className="rounded border-slate-300 text-[#4E6290] focus:ring-[#4E6290] h-3.5 w-3.5"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-slate-800 truncate text-xs">{l.filename}</p>
+                            <p className="text-[9px] text-slate-400 font-mono">Date: {new Date(l.uploadedAt).toLocaleDateString()} • Size: {(l.size / 1024).toFixed(1)} KB</p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="lg:col-span-5 flex flex-col justify-between gap-4">
+              <div>
+                <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">2. Choose Export Format</h3>
+                <p className="text-[10px] text-slate-400 font-medium">Select dynamic PDF reports with graphical visualizers or raw comma-separated values (CSV).</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setReportExportFormat("pdf")}
+                  className={`p-3 border-2 rounded-xl flex flex-col items-center gap-2 transition-all ${
+                    reportExportFormat === "pdf"
+                      ? "border-[#4E6290] bg-[#4E6290]/5 text-[#4E6290]"
+                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="p-1.5 bg-rose-50 text-rose-500 rounded-lg">
+                    <FileText className="h-4 w-4" />
+                  </div>
+                  <span className="text-[9px] font-black uppercase tracking-wider">PDF (With Graphs)</span>
+                </button>
+
+                <button
+                  onClick={() => setReportExportFormat("csv")}
+                  className={`p-3 border-2 rounded-xl flex flex-col items-center gap-2 transition-all ${
+                    reportExportFormat === "csv"
+                      ? "border-[#4E6290] bg-[#4E6290]/5 text-[#4E6290]"
+                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="p-1.5 bg-emerald-50 text-emerald-500 rounded-lg">
+                    <FileSpreadsheet className="h-4 w-4" />
+                  </div>
+                  <span className="text-[9px] font-black uppercase tracking-wider">Raw CSV Data</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* 1. Daily Traffic Summary */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 flex flex-col">
@@ -1530,10 +1761,10 @@ export default function AnalyticsTab() {
               </div>
               <button 
                 onClick={() => handleGenerateAdminReport("Daily Traffic Summary")}
-                disabled={generatingReport || ledgersByDay.length === 0}
+                disabled={generatingReport || (selectedLedgerIds.length === 0 && unifiedLedgers.length === 0)}
                 className="w-full py-2.5 bg-[#4E6290] hover:bg-[#3D4F75] text-white font-black text-[10px] uppercase rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {generatingReport ? "Generating..." : <><Share className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
+                {generatingReport ? "Generating..." : reportExportFormat === "csv" ? <><Download className="h-3.5 w-3.5" /> <span>Download CSV</span></> : <><Share className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
               </button>
             </div>
 
@@ -1550,10 +1781,10 @@ export default function AnalyticsTab() {
               </div>
               <button 
                 onClick={() => handleGenerateAdminReport("Vehicle Type Breakdown")}
-                disabled={generatingReport || unifiedLedgers.length === 0}
+                disabled={generatingReport || (selectedLedgerIds.length === 0 && unifiedLedgers.length === 0)}
                 className="w-full py-2.5 bg-[#4E6290] hover:bg-[#3D4F75] text-white font-black text-[10px] uppercase rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {generatingReport ? "Generating..." : <><Share className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
+                {generatingReport ? "Generating..." : reportExportFormat === "csv" ? <><Download className="h-3.5 w-3.5" /> <span>Download CSV</span></> : <><Share className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
               </button>
             </div>
 
@@ -1570,10 +1801,10 @@ export default function AnalyticsTab() {
               </div>
               <button 
                 onClick={() => handleGenerateAdminReport("Date-Range Comparison")}
-                disabled={generatingReport || unifiedLedgers.length === 0}
+                disabled={generatingReport || (selectedLedgerIds.length === 0 && unifiedLedgers.length === 0)}
                 className="w-full py-2.5 bg-[#4E6290] hover:bg-[#3D4F75] text-white font-black text-[10px] uppercase rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {generatingReport ? "Generating..." : <><Share className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
+                {generatingReport ? "Generating..." : reportExportFormat === "csv" ? <><Download className="h-3.5 w-3.5" /> <span>Download CSV</span></> : <><Share className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
               </button>
             </div>
 
@@ -1593,7 +1824,7 @@ export default function AnalyticsTab() {
                 disabled={generatingReport}
                 className="w-full py-2.5 bg-[#4E6290] hover:bg-[#3D4F75] text-white font-black text-[10px] uppercase rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {generatingReport ? "Generating..." : <><Share className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
+                {generatingReport ? "Generating..." : reportExportFormat === "csv" ? <><Download className="h-3.5 w-3.5" /> <span>Download CSV</span></> : <><Share className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
               </button>
             </div>
 
@@ -1613,10 +1844,10 @@ export default function AnalyticsTab() {
               </div>
               <button 
                 onClick={() => handleGenerateAdminReport("Certified Traffic Log")}
-                disabled={generatingReport || unifiedLedgers.length === 0}
+                disabled={generatingReport || (selectedLedgerIds.length === 0 && unifiedLedgers.length === 0)}
                 className="w-full py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-black text-[10px] uppercase rounded-xl shadow-sm shadow-rose-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {generatingReport ? "Generating..." : <><CheckCircle2 className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
+                {generatingReport ? "Generating..." : reportExportFormat === "csv" ? <><Download className="h-3.5 w-3.5" /> <span>Download CSV</span></> : <><CheckCircle2 className="h-3.5 w-3.5" /> <span>Generate & Share</span></>}
               </button>
             </div>
           </div>
@@ -2639,116 +2870,170 @@ export default function AnalyticsTab() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div 
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fadeIn" 
-            onClick={() => !isSendingEmail && !isSavingToDrive && setShowShareModal(false)}
+            onClick={() => !isSendingEmail && !isSavingToDrive && closeShareModal()}
           />
-          <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden animate-scaleIn border border-slate-200">
-            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-[#4E6290] text-white rounded-xl shadow-lg shadow-[#4E6290]/20">
-                  <Share className="h-5 w-5" />
+          <div className="relative w-full max-w-6xl bg-white rounded-3xl shadow-2xl overflow-hidden animate-scaleIn border border-slate-200 flex flex-col lg:flex-row h-[90vh] max-h-[850px]">
+            {/* LEFT PANEL: INTERACTIVE PREVIEW */}
+            <div className="flex-1 bg-slate-50 p-6 flex flex-col border-b lg:border-b-0 lg:border-r border-slate-200 overflow-hidden min-h-[300px]">
+              <div className="flex items-center justify-between mb-4 shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                    <Eye className="h-4 w-4" />
+                  </span>
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Live Document Preview</h4>
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Share Official Report</h3>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{currentReport.type}</p>
-                </div>
+                <span className="px-2.5 py-0.5 bg-indigo-100 text-indigo-800 rounded-full text-[9px] font-black uppercase tracking-tight">
+                  {currentReport.previewUrl ? "Official Compiled PDF" : "Raw Concatenated CSV"}
+                </span>
               </div>
-              <button 
-                onClick={() => setShowShareModal(false)} 
-                className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition-all"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              
+              <div className="flex-1 relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white">
+                {currentReport.previewUrl ? (
+                  <iframe 
+                    src={currentReport.previewUrl} 
+                    className="w-full h-full border-0 rounded-2xl" 
+                    title="Report PDF Preview"
+                  />
+                ) : currentReport.csvData ? (
+                  <div className="w-full h-full overflow-auto p-5 bg-slate-900 text-emerald-400 font-mono text-[11px] leading-relaxed whitespace-pre">
+                    {currentReport.csvData}
+                  </div>
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-xs font-medium">
+                    No preview content available.
+                  </div>
+                )}
+              </div>
             </div>
-            
-            <div className="p-6 space-y-6">
-              {/* File Preview Card */}
-              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 flex items-center gap-4">
-                <div className="h-12 w-12 bg-white rounded-xl border border-slate-200 flex items-center justify-center text-rose-500 shadow-sm">
-                  <FileText className="h-6 w-6" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-black text-slate-800 truncate">{currentReport.filename}</p>
-                  <p className="text-[10px] text-slate-400 font-bold">Official PDF Document • Ref: {currentReport.doc.internal.pageSize.getWidth()}pt</p>
+
+            {/* RIGHT PANEL: ACTIONS & DELIVERY */}
+            <div className="w-full lg:w-[400px] flex flex-col overflow-y-auto shrink-0 bg-white">
+              <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-[#4E6290] text-white rounded-xl shadow-lg shadow-[#4E6290]/20">
+                    <Share className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Report Distribution</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[200px]">{currentReport.type}</p>
+                  </div>
                 </div>
                 <button 
-                  onClick={() => currentReport.doc.save(currentReport.filename)}
-                  className="p-2 text-[#4E6290] hover:bg-[#4E6290]/10 rounded-xl transition-all"
-                  title="Download Copy"
+                  onClick={closeShareModal} 
+                  className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition-all"
                 >
-                  <Download className="h-5 w-5" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
-
-              {/* Action Tabs: Gmail vs Drive */}
-              <div className="space-y-4">
-                <div className="flex flex-col gap-3">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Delivery Options</span>
-                  
-                  {/* Save to Drive Action */}
-                  <button
-                    onClick={handleSaveToDrive}
-                    disabled={isSavingToDrive}
-                    className="w-full flex items-center gap-3 p-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl transition-all group relative overflow-hidden active:scale-[0.98]"
-                  >
-                    <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-all">
-                      <HardDrive className="h-5 w-5" />
+              
+              <div className="p-6 space-y-6 flex-1 flex flex-col justify-between">
+                <div className="space-y-6">
+                  {/* File Metadata Card */}
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 flex items-center gap-4">
+                    <div className={`h-12 w-12 rounded-xl border border-slate-200 flex items-center justify-center shadow-sm ${currentReport.previewUrl ? 'bg-rose-50 text-rose-500' : 'bg-emerald-50 text-emerald-500'}`}>
+                      {currentReport.previewUrl ? <FileText className="h-6 w-6" /> : <FileSpreadsheet className="h-6 w-6" />}
                     </div>
-                    <div className="text-left flex-1">
-                      <p className="text-xs font-black text-slate-800">Save to Google Drive</p>
-                      <p className="text-[10px] text-slate-400 font-medium">Upload to official STAP Reports archive</p>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-black text-slate-800 truncate" title={currentReport.filename}>
+                        {currentReport.filename}
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">
+                        {currentReport.previewUrl ? "Dynamic PDF Report" : "Raw Compiled CSV File"}
+                      </p>
                     </div>
-                    {isSavingToDrive && <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" />}
-                  </button>
+                    <button 
+                      onClick={downloadCurrentReport}
+                      className="p-2.5 text-[#4E6290] hover:bg-[#4E6290]/10 rounded-xl transition-all"
+                      title="Download Report File"
+                    >
+                      <Download className="h-5 w-5" />
+                    </button>
+                  </div>
 
-                  {/* Send via Email Section */}
-                  <div className="p-4 bg-slate-50/50 border border-slate-200 rounded-2xl space-y-4">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
-                        <Mail className="h-5 w-5" />
+                  {/* Delivery Options Section */}
+                  <div className="space-y-4">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Distribution Channels</span>
+                    
+                    {/* Direct Download Large Button */}
+                    <button
+                      onClick={downloadCurrentReport}
+                      className="w-full flex items-center gap-3 p-4 bg-emerald-500/5 hover:bg-emerald-500/10 border border-emerald-500/20 rounded-2xl transition-all group active:scale-[0.98]"
+                    >
+                      <div className="p-2.5 bg-emerald-500 text-white rounded-xl">
+                        <Download className="h-5 w-5" />
                       </div>
-                      <div className="text-left">
-                        <p className="text-xs font-black text-slate-800">Send via Gmail</p>
-                        <p className="text-[10px] text-slate-400 font-medium">Deliver as secure attachment</p>
+                      <div className="text-left flex-1">
+                        <p className="text-xs font-black text-emerald-800">Direct Download to PC</p>
+                        <p className="text-[10px] text-emerald-500 font-semibold uppercase">Get local {currentReport.previewUrl ? "PDF" : "CSV"} copy instantly</p>
                       </div>
-                    </div>
+                    </button>
 
-                    <div className="space-y-3">
-                      <input 
-                        type="email"
-                        placeholder="Recipient Email Address"
-                        value={recipientEmail}
-                        onChange={(e) => setRecipientEmail(e.target.value)}
-                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-[#4E6290]/20 focus:border-[#4E6290] transition-all"
-                      />
-                      <textarea 
-                        placeholder="Add a message (optional)..."
-                        value={emailNote}
-                        onChange={(e) => setEmailNote(e.target.value)}
-                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-[#4E6290]/20 focus:border-[#4E6290] transition-all h-20 resize-none"
-                      />
-                      <button
-                        onClick={handleSendEmail}
-                        disabled={isSendingEmail || !recipientEmail}
-                        className="w-full py-3 bg-[#4E6290] hover:bg-[#3D4F75] text-white font-black text-xs uppercase rounded-xl shadow-lg shadow-[#4E6290]/20 transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
-                      >
-                        {isSendingEmail ? (
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4" />
-                        )}
-                        <span>{isSendingEmail ? "Sending..." : "Send Now"}</span>
-                      </button>
+                    {/* Save to Drive Action */}
+                    <button
+                      onClick={handleSaveToDrive}
+                      disabled={isSavingToDrive}
+                      className="w-full flex items-center gap-3 p-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl transition-all group relative overflow-hidden active:scale-[0.98]"
+                    >
+                      <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-all">
+                        <HardDrive className="h-5 w-5" />
+                      </div>
+                      <div className="text-left flex-1">
+                        <p className="text-xs font-black text-slate-800">Save to Google Drive</p>
+                        <p className="text-[10px] text-slate-400 font-medium">Upload to official STAP Reports archive</p>
+                      </div>
+                      {isSavingToDrive && <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" />}
+                    </button>
+
+                    {/* Send via Email Section */}
+                    <div className="p-4 bg-slate-50/50 border border-slate-200 rounded-2xl space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
+                          <Mail className="h-5 w-5" />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-xs font-black text-slate-800">Send via Gmail</p>
+                          <p className="text-[10px] text-slate-400 font-medium">Deliver as secure attachment</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <input 
+                          type="email"
+                          placeholder="Recipient Email Address"
+                          value={recipientEmail}
+                          onChange={(e) => setRecipientEmail(e.target.value)}
+                          className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-[#4E6290]/20 focus:border-[#4E6290] transition-all"
+                        />
+                        <textarea 
+                          placeholder="Add a message (optional)..."
+                          value={emailNote}
+                          onChange={(e) => setEmailNote(e.target.value)}
+                          className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-[#4E6290]/20 focus:border-[#4E6290] transition-all h-20 resize-none"
+                        />
+                        <button
+                          onClick={handleSendEmail}
+                          disabled={isSendingEmail || !recipientEmail}
+                          className="w-full py-3 bg-[#4E6290] hover:bg-[#3D4F75] text-white font-black text-xs uppercase rounded-xl shadow-lg shadow-[#4E6290]/20 transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2"
+                        >
+                          {isSendingEmail ? (
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Send className="h-4 w-4" />
+                          )}
+                          <span>{isSendingEmail ? "Sending..." : "Send Now"}</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {shareSuccess && (
-                <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl border border-emerald-100 text-[11px] font-bold flex items-center gap-2 animate-fadeIn">
-                  <Check className="h-4 w-4" />
-                  {shareSuccess}
-                </div>
-              )}
+                {shareSuccess && (
+                  <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl border border-emerald-100 text-[11px] font-bold flex items-center gap-2 animate-fadeIn mt-4 shrink-0">
+                    <Check className="h-4 w-4" />
+                    {shareSuccess}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
