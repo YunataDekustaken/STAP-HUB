@@ -51,6 +51,7 @@ export default function ControlTab({
 }: ControlTabProps) {
   const [inputValue, setInputValue] = useState(nodeIp || "192.168.1.100");
   const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState("");
 
   // Local state to track image errors on video streams
@@ -149,6 +150,7 @@ export default function ControlTab({
     e.preventDefault();
     if (!inputValue.trim()) return;
     setIsConnecting(true);
+    setConnectionError(null);
     setNodeIp(inputValue);
     
     try {
@@ -156,15 +158,23 @@ export default function ControlTab({
       const proxyUrl = `/api/v1/proxy-python-status?url=${encodeURIComponent(targetUrl)}`;
       const pingPromise = fetch(proxyUrl);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Timeout")), 3000)
+        setTimeout(() => reject(new Error("Request timed out")), 5000)
       );
       
       const res = await Promise.race([pingPromise, timeoutPromise]) as Response;
-      if (!res.ok) throw new Error("Proxy response not OK");
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: "Unknown proxy error" }));
+        throw new Error(errData.error || `Proxy response ${res.status}`);
+      }
       
       setIsConnecting(false);
       setIsNodeConnected(true);
-    } catch (err) {
+      setConnectionError(null);
+    } catch (err: any) {
+      console.error("ControlTab Connection Error:", err);
+      const errorMsg = err.message || "Failed to connect to node.";
+      
       try {
         const res = await fetch("/api/v1/status");
         if (res.ok) {
@@ -172,14 +182,17 @@ export default function ControlTab({
           if (data.nodeOnline) {
             setIsConnecting(false);
             setIsNodeConnected(true);
+            setConnectionError(null);
             return;
           }
         }
       } catch (cloudErr) {
         console.error("Cloud status error in ControlTab:", cloudErr);
       }
+      
       setIsConnecting(false);
       setIsNodeConnected(false);
+      setConnectionError(errorMsg);
     }
   };
 

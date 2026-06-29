@@ -223,26 +223,44 @@ export default function DashboardTab({
     <div className="space-y-6" id="dashboard-tab">
       
       {/* 2. Notification / Active Bar */}
-      <div className="flex items-center justify-between text-xs font-semibold pt-2">
-        <div className="flex items-center gap-2.5">
-          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide flex items-center gap-1.5 ${
-            isNodeConnected 
-              ? "bg-emerald-100 text-emerald-700" 
-              : "bg-red-100 text-red-600"
-          }`}>
-            <span className={`h-2 w-2 rounded-full ${isNodeConnected ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
-            LIVE DATABASE
-          </span>
-          <span className={isNodeConnected ? "text-emerald-600 font-bold" : "text-rose-500"}>
-            {isNodeConnected 
-              ? "— Connected to STAP Node. Live vehicle counts active." 
-              : "— Node offline, counts reset to 0"
-            }
-          </span>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between text-xs font-semibold pt-2">
+          <div className="flex items-center gap-2.5">
+            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide flex items-center gap-1.5 ${
+              isNodeConnected 
+                ? "bg-emerald-100 text-emerald-700" 
+                : "bg-red-100 text-red-600"
+            }`}>
+              <span className={`h-2 w-2 rounded-full ${isNodeConnected ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
+              LIVE DATABASE
+            </span>
+            <span className={isNodeConnected ? "text-emerald-600 font-bold" : "text-rose-500"}>
+              {isNodeConnected 
+                ? "— Connected to STAP Node. Live vehicle counts active." 
+                : "— Node offline, counts reset to 0"
+              }
+            </span>
+          </div>
+          <div className="text-slate-400 font-bold tracking-wider uppercase text-[10px]">
+            LATEST CAPTURED VEHICLE COUNTS
+          </div>
         </div>
-        <div className="text-slate-400 font-bold tracking-wider uppercase text-[10px]">
-          LATEST CAPTURED VEHICLE COUNTS
-        </div>
+
+        {/* Private IP Warning for Cloud Proxy */}
+        {!isNodeConnected && nodeIp && (nodeIp.includes("192.168.") || nodeIp.includes("10.") || nodeIp.includes("172.")) && window.location.protocol === "https:" && (
+          <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-start gap-3 text-[11px] text-rose-700 animate-fadeIn">
+            <ShieldAlert className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-black uppercase tracking-tight">Cloud Proxy Connection Limitation</p>
+              <p className="leading-normal font-medium">
+                You are using a private IP (<span className="font-mono font-bold">{nodeIp}</span>). 
+                The cloud-hosted hub cannot reach private local networks directly. 
+                <br />
+                <span className="font-bold underline">To fix this:</span> Use a public URL (via <strong>ngrok</strong> or <strong>bore</strong>) or ensure your browser is configured to <strong>Allow Insecure Content</strong> for local HTTP streams.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 3. Four Horizontal Live Count Cards Row */}
