@@ -121,6 +121,176 @@ app.get("/api/v1/proxy-python-status", async (req: Request, res: Response) => {
   }
 });
 
+// --- API ROUTE: Proxy for Insecure Python Control POST commands (Bypasses HTTPS Mixed Content) ---
+app.post("/api/v1/proxy-python-control", async (req: Request, res: Response) => {
+  const { targetUrl, body } = req.body;
+  if (!targetUrl) return res.status(400).json({ success: false, error: "Missing 'targetUrl' parameter." });
+
+  try {
+    // Only allow control/mode or control/light endpoints to prevent abuse
+    if (!targetUrl.includes("/control/")) {
+      return res.status(403).json({ success: false, error: "Only control endpoint proxying is permitted." });
+    }
+
+    const response = await fetch(targetUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(3000)
+    });
+
+    if (!response.ok) throw new Error(`Target returned ${response.status}`);
+    
+    const contentType = response.headers.get("content-type");
+    let responseData;
+    if (contentType && contentType.includes("application/json")) {
+      responseData = await response.json();
+    } else {
+      responseData = { text: await response.text() };
+    }
+    res.json(responseData);
+  } catch (err: any) {
+    res.status(502).json({ success: false, error: `Proxy failed: ${err.message}` });
+  }
+});
+
+const CAMERA_ID_TO_LANE: Record<number, "NORTH" | "SOUTH" | "EAST" | "WEST"> = {
+  1: "NORTH",
+  2: "SOUTH",
+  3: "EAST",
+  4: "WEST",
+};
+
+// --- API ROUTE: Receive Real-Time YOLO Snapshot Postings ---
+app.post("/api/v1/snapshots", async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
+      return res.status(401).json({ success: false, error: "Unauthorized Bearer Token" });
+    }
+
+    const {
+      camera_id,
+      cars,
+      trucks,
+      motorcycles,
+      buses,
+      emergency_vehicles,
+      congestion,
+    } = req.body;
+
+    const laneKey = CAMERA_ID_TO_LANE[camera_id as number];
+    if (!laneKey) {
+      return res.status(400).json({ success: false, error: `Invalid camera_id: ${camera_id}` });
+    }
+
+    // Fetch existing state via REST API to merge fields dynamically
+    let currentState: any = {};
+    try {
+      const existing = await firestoreREST("GET", "system/state");
+      if (existing && existing.fields) {
+        currentState = existing.fields;
+      }
+    } catch (e) {
+      // Document doesn't exist yet, start clean
+    }
+
+    const combinedCount = (cars || 0) + (trucks || 0) + (motorcycles || 0) + (buses || 0) + (emergency_vehicles || 0);
+    const estimatedDensity = Math.min(100, Math.round(combinedCount * 7.5 + Math.random() * 5));
+
+    const currentLanesMap = currentState.lanes?.mapValue?.fields || {};
+    const existingLaneMap = currentLanesMap[laneKey]?.mapValue?.fields || {};
+
+    currentLanesMap[laneKey] = {
+      mapValue: {
+        fields: {
+          count: { integerValue: String(combinedCount) },
+          density: { integerValue: String(estimatedDensity) },
+          light: { stringValue: existingLaneMap.light?.stringValue || "RED" },
+          los: { stringValue: congestion || "A" }
+        }
+      }
+    };
+
+    currentState.lanes = { mapValue: { fields: currentLanesMap } };
+    currentState.heartbeatTime = { integerValue: String(Date.now()) };
+    currentState.updatedAt = { stringValue: new Date().toISOString() };
+
+    await firestoreREST("PATCH", "system/state", { fields: currentState });
+    res.json({ success: true, message: `Snapshot parsed successfully for ${laneKey}` });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- API ROUTE: Hardware Node Heartbeat ---
+app.post("/api/v1/heartbeat", async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${AUTHORIZATION_TOKEN}`) {
+      return res.status(401).json({ success: false, error: "Unauthorized Heartbeat Token" });
+    }
+
+    // Fetch existing state via REST API
+    let currentState: any = {};
+    try {
+      const existing = await firestoreREST("GET", "system/state");
+      if (existing && existing.fields) {
+        currentState = existing.fields;
+      }
+    } catch (e) {}
+
+    currentState.heartbeatTime = { integerValue: String(Date.now()) };
+    currentState.updatedAt = { stringValue: new Date().toISOString() };
+
+    await firestoreREST("PATCH", "system/state", { fields: currentState });
+    res.json({ success: true, status: "alive" });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- API ROUTE: Gmail - Send Reply to Footage Request ---
+app.post("/api/footage-requests/reply", async (req: Request, res: Response) => {
+  const { to, subject, body } = req.body;
+  if (!to || !body) {
+    return res.status(400).json({ success: false, error: "Missing 'to' or 'body' in request." });
+  }
+
+  try {
+    const auth = await getAutoRefreshingAuthClient();
+    const gmail = google.gmail({ version: "v1", auth });
+    
+    // Create raw email string
+    const utf8Subject = `=?utf-8?B?${Buffer.from(subject || "Response to Footage Request").toString("base64")}?=`;
+    const messageParts = [
+      `To: ${to}`,
+      "Content-Type: text/html; charset=utf-8",
+      "MIME-Version: 1.0",
+      `Subject: ${utf8Subject}`,
+      "",
+      body
+    ];
+    const message = messageParts.join("\n");
+
+    const encodedMessage = Buffer.from(message)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw: encodedMessage },
+    });
+
+    res.json({ success: true, message: "Email sent successfully via Gmail API." });
+  } catch (err: any) {
+    console.error("[STAP HUB] Gmail Send Error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "";
 
 // --- API ROUTE: Google Auth - Status ---
@@ -735,6 +905,18 @@ app.get("/api/v1/status", async (req: Request, res: Response) => {
     const heartbeat = Number(fields.heartbeatTime?.integerValue || 0);
     const nodeOnline = Date.now() - heartbeat < 20000;
 
+    const rawLanes = fields.lanes?.mapValue?.fields || {};
+    const lanes: any = {};
+    ["NORTH", "SOUTH", "EAST", "WEST"].forEach((ln) => {
+      const laneFields = rawLanes[ln]?.mapValue?.fields || {};
+      lanes[ln] = {
+        count: Number(laneFields.count?.integerValue || 0),
+        density: Number(laneFields.density?.integerValue || 0),
+        light: laneFields.light?.stringValue || "RED",
+        los: laneFields.los?.stringValue || "A"
+      };
+    });
+
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
     return res.json({
       mode: fields.mode?.stringValue || "AUTO",
@@ -742,6 +924,7 @@ app.get("/api/v1/status", async (req: Request, res: Response) => {
       weather: fields.weather?.stringValue || "SUNNY",
       remainingSecs: Number(fields.remainingSecs?.integerValue || 0),
       greenDuration: Number(fields.greenDuration?.integerValue || 0),
+      lanes,
       nodeOnline,
       serverTime: new Date().toISOString()
     });
