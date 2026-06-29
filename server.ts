@@ -153,13 +153,27 @@ const AUTHORIZATION_TOKEN = "node_alpha_J7FVxdRBqwCBWQSdiKBN742lMHuEPX5A";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN || "";
-const APP_URL = process.env.APP_URL || "http://localhost:3000";
+const APP_URL = process.env.APP_URL || "";
 
-const oauth2ClientBase = new google.auth.OAuth2(
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  `${APP_URL}/api/auth/google/callback`
-);
+function createOAuth2Client(req?: Request) {
+  let redirectOrigin = APP_URL;
+  
+  if (!redirectOrigin && req) {
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+    const host = req.get("host");
+    redirectOrigin = `${protocol}://${host}`;
+  }
+
+  if (!redirectOrigin) {
+    redirectOrigin = "https://stap-hub.vercel.app";
+  }
+
+  return new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    `${redirectOrigin}/api/auth/google/callback`
+  );
+}
 
 /**
  * Helper function to get an auto-refreshing Google Auth Client.
@@ -188,11 +202,7 @@ async function getAutoRefreshingAuthClient() {
   }
 
   // 2. Create a clean OAuth instance
-  const authClient = new google.auth.OAuth2(
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    `${APP_URL}/api/auth/google/callback`
-  );
+  const authClient = createOAuth2Client();
 
   // 3. Set the refresh token
   authClient.setCredentials({
@@ -750,18 +760,20 @@ app.get("/api/auth/google/url", (req: Request, res: Response) => {
       });
     }
 
+    const oauth2Client = createOAuth2Client(req);
     const scopes = [
       "https://www.googleapis.com/auth/gmail.send",
       "https://www.googleapis.com/auth/drive.readonly",
       "https://www.googleapis.com/auth/userinfo.email"
     ];
 
-    const url = oauth2ClientBase.generateAuthUrl({
+    const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
       scope: scopes,
       prompt: "consent"
     });
 
+    console.log(`[STAP HUB] Generated Google Auth URL with Redirect: ${oauth2Client.redirectUri}`);
     res.json({ success: true, url });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -773,7 +785,8 @@ app.get("/api/auth/google/callback", asyncHandler(async (req: Request, res: Resp
   const { code } = req.query;
   if (!code) return res.status(400).send("No code provided.");
 
-  const { tokens } = await oauth2ClientBase.getToken(code as string);
+  const oauth2Client = createOAuth2Client(req);
+  const { tokens } = await oauth2Client.getToken(code as string);
   const refreshToken = tokens.refresh_token;
 
   // Store the permanent refresh token in Firestore for background auto-refreshing
