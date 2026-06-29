@@ -750,6 +750,23 @@ app.get("/api/v1/proxy-python-status", asyncHandler(async (req: Request, res: Re
   }
 }));
 
+// --- API ROUTE: Google Auth - Status ---
+app.get("/api/auth/google/status", asyncHandler(async (req: Request, res: Response) => {
+  try {
+    const auth = await getAutoRefreshingAuthClient();
+    const oauth2 = google.oauth2({ version: "2", auth });
+    const userInfo = await oauth2.userinfo.get();
+    
+    res.json({ 
+      success: true, 
+      connected: true, 
+      email: userInfo.data.email 
+    });
+  } catch (err: any) {
+    res.json({ success: true, connected: false, error: err.message });
+  }
+}));
+
 // --- API ROUTE: Google Auth - Get URL ---
 app.get("/api/auth/google/url", (req: Request, res: Response) => {
   try {
