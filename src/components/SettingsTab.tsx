@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Lane, LightState, User, Role, FirebaseConnectionConfig } from "../types";
-import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X, Clock, HardDrive } from "lucide-react";
+import { Server, Wifi, WifiOff, CloudSun, RefreshCw, Sliders, Check, Database, Key, HelpCircle, ShieldAlert, Users, UserPlus, Trash2, Shield, Settings, Mail, X, Clock, HardDrive, MapPin, Save } from "lucide-react";
 import { getFirebaseConfig, saveFirebaseConfig, getFirebaseInstances, handleFirestoreError, OperationType, STAPDatabaseManager, FirebaseSavedSettings } from "../firebase";
 import { collection, onSnapshot, doc, addDoc, setDoc, deleteDoc } from "firebase/firestore";
 import AdminSettingsTab from "./AdminSettingsTab";
@@ -39,6 +39,11 @@ export default function SettingsTab({
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
+  const [weatherSuccess, setWeatherSuccess] = useState("");
+  const [weatherError, setWeatherError] = useState("");
+  const [weatherApiLoc, setWeatherApiLoc] = useState("Marikina City");
+  const [isSavingWeatherApi, setIsSavingWeatherApi] = useState(false);
+
   // Sub-tabs navigation state
   const [activeSubTab, setActiveSubTab] = useState<"general" | "users" | "pending" | "admin">("general");
 
@@ -63,6 +68,20 @@ export default function SettingsTab({
   useEffect(() => {
     const config = getFirebaseConfig();
     setFirebaseConnected(config.connected);
+    
+    // Fetch WeatherAPI config
+    const fetchWeatherApi = async () => {
+      try {
+        const res = await fetch("/api/weather/config");
+        const data = await res.json();
+        if (data.success) {
+          setWeatherApiLoc(data.location || "Marikina City");
+        }
+      } catch (err) {
+        console.error("Failed to fetch weather API config:", err);
+      }
+    };
+    fetchWeatherApi();
   }, []);
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -286,14 +305,41 @@ export default function SettingsTab({
 
   const handleSetWeather = async (newWeather: "SUNNY" | "RAINY") => {
     setWeather(newWeather);
+    setWeatherSuccess("");
+    setWeatherError("");
     try {
       await fetch("/api/v1/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ weather: newWeather })
       });
+      setWeatherSuccess(`Local weather profile switched to ${newWeather} successfully.`);
     } catch (e) {
       console.error("Failed to sync weather to server:", e);
+      setWeatherError("Failed to sync local weather profile.");
+    }
+  };
+
+  const handleSaveWeatherApi = async () => {
+    setIsSavingWeatherApi(true);
+    setWeatherSuccess("");
+    setWeatherError("");
+    try {
+      const res = await fetch("/api/weather/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ location: weatherApiLoc })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setWeatherSuccess(`Regional forecast location updated to "${weatherApiLoc}" successfully.`);
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (err: any) {
+      setWeatherError(err.message || "Failed to update regional forecast location");
+    } finally {
+      setIsSavingWeatherApi(false);
     }
   };
 
@@ -493,6 +539,20 @@ export default function SettingsTab({
               </div>
             </div>
 
+            {weatherSuccess && (
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2 animate-fadeIn mb-6">
+                <Check className="h-4 w-4 text-emerald-500" />
+                <span>{weatherSuccess}</span>
+              </div>
+            )}
+
+            {weatherError && (
+              <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl text-rose-800 text-xs font-bold flex items-center gap-2 animate-fadeIn mb-6">
+                <span className="text-rose-500">⚠️</span>
+                <span>{weatherError}</span>
+              </div>
+            )}
+
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
@@ -507,10 +567,12 @@ export default function SettingsTab({
                       onChange={(e) => {
                         const val = e.target.value;
                         setPresetLocation(val);
+                        setWeatherSuccess("");
+                        setWeatherError("");
                         if (val !== "CUSTOM") {
                           setCustomLocationInput(val);
                           onUpdateWeatherLocation(val);
-                          setSuccessMessage(`Weather location updated to "${val}" successfully.`);
+                          setWeatherSuccess(`Weather location updated to "${val}" successfully.`);
                         }
                       }}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:border-slate-400 focus:bg-white disabled:opacity-60"
@@ -538,8 +600,10 @@ export default function SettingsTab({
                             type="button"
                             disabled={!isAdmin || !customLocationInput.trim()}
                             onClick={() => {
+                              setWeatherSuccess("");
+                              setWeatherError("");
                               onUpdateWeatherLocation(customLocationInput.trim());
-                              setSuccessMessage(`Geographical reference bound to custom location: "${customLocationInput.trim()}"`);
+                              setWeatherSuccess(`Geographical reference bound to custom location: "${customLocationInput.trim()}"`);
                             }}
                             className="bg-slate-850 hover:bg-slate-700 text-white font-bold text-xs px-3 py-2 rounded-lg transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
                           >
@@ -582,6 +646,58 @@ export default function SettingsTab({
                       🌧️ RAINY / STORMY
                     </button>
                   </div>
+                </div>
+              </div>
+
+              {/* WeatherAPI Configuration integrated here */}
+              <div className="pt-6 border-t border-slate-100 space-y-4">
+                <div className="flex items-center gap-2">
+                  <CloudSun className="h-4 w-4 text-amber-500" />
+                  <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Regional Forecast Monitoring (WeatherAPI)</span>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-extrabold text-slate-400 block uppercase tracking-wider">Monitoring Location (Forecast Source)</label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                        <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                      </div>
+                      <input 
+                        type="text" 
+                        disabled={!isAdmin}
+                        value={weatherApiLoc}
+                        onChange={(e) => setWeatherApiLoc(e.target.value)}
+                        placeholder="e.g. Marikina City"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-3 py-2.5 text-xs text-slate-800 outline-none focus:border-slate-400 focus:bg-white disabled:opacity-60"
+                      />
+                    </div>
+                  </div>
+                  <button 
+                    onClick={handleSaveWeatherApi}
+                    disabled={!isAdmin || isSavingWeatherApi}
+                    className="bg-[#0F172A] hover:bg-slate-800 text-white font-bold text-xs px-6 py-2.5 rounded-lg transition-all active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 h-[41px]"
+                  >
+                    {isSavingWeatherApi ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                    Save Regional Config
+                  </button>
+                </div>
+
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                  <div className="flex items-center gap-2 mb-2">
+                    <HelpCircle className="h-3.5 w-3.5 text-slate-400" />
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Weather Service Usage</span>
+                  </div>
+                  <ul className="text-[10px] text-slate-400 space-y-1 ml-1">
+                    <li className="flex items-start gap-2">
+                      <span className="text-amber-500">•</span>
+                      <span>Regional weather provides 3-day forecasts and long-term humidity tracking on the Dashboard.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="text-amber-500">•</span>
+                      <span>This operates independently from the local hardware precipitation sensors at the intersection.</span>
+                    </li>
+                  </ul>
                 </div>
               </div>
 
