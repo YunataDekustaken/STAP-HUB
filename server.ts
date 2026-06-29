@@ -987,6 +987,7 @@ app.get("/api/auth/google/url", (req: Request, res: Response) => {
     const oauth2Client = createOAuth2Client(req);
     const scopes = [
       "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/drive.readonly",
       "https://www.googleapis.com/auth/userinfo.email"
     ];
@@ -1063,10 +1064,9 @@ app.post("/api/footage-requests/reply", asyncHandler(async (req: Request, res: R
       "MIME-Version: 1.0",
       `Subject: ${utf8Subject}`,
       "",
-      body
+      body,
     ];
     const message = messageParts.join("\n");
-
     const encodedMessage = Buffer.from(message)
       .toString("base64")
       .replace(/\+/g, "-")
@@ -1082,6 +1082,70 @@ app.post("/api/footage-requests/reply", asyncHandler(async (req: Request, res: R
   } catch (err: any) {
     console.error("[STAP HUB] Gmail Send Error:", err);
     res.status(500).json({ success: false, error: err.message });
+  }
+}));
+
+// Fetch Live Gmail Inbox Messages
+app.get("/api/gmail/messages", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await getAutoRefreshingAuthClient();
+  if (!auth) {
+    return res.status(401).json({ error: "Google account not connected" });
+  }
+
+  try {
+    const gmail = google.gmail({ version: "v1", auth });
+    
+    // 1. List latest 15 messages
+    const listRes = await gmail.users.messages.list({
+      userId: "me",
+      maxResults: 15,
+      q: "-from:me" // Exclude sent mail to show actual inbox
+    });
+
+    const messages = listRes.data.messages || [];
+    const detailedMessages = await Promise.all(
+      messages.map(async (msg) => {
+        const detail = await gmail.users.messages.get({
+          userId: "me",
+          id: msg.id!,
+          format: "full"
+        });
+
+        const headers = detail.data.payload?.headers || [];
+        const subject = headers.find(h => h.name === "Subject")?.value || "(No Subject)";
+        const from = headers.find(h => h.name === "From")?.value || "Unknown Sender";
+        const date = headers.find(h => h.name === "Date")?.value || "";
+
+        // Simple body extraction
+        let body = "";
+        const parts = detail.data.payload?.parts || [];
+        if (detail.data.payload?.body?.data) {
+          body = Buffer.from(detail.data.payload.body.data, 'base64').toString();
+        } else if (parts.length > 0) {
+          // Find first text/plain or text/html part
+          const textPart = parts.find(p => p.mimeType === "text/plain") || parts[0];
+          if (textPart.body?.data) {
+            body = Buffer.from(textPart.body.data, 'base64').toString();
+          }
+        }
+
+        return {
+          id: detail.data.id,
+          threadId: detail.data.threadId,
+          subject,
+          from,
+          date,
+          snippet: detail.data.snippet,
+          body: body.substring(0, 5000), // Cap size
+          timestamp: detail.data.internalDate ? new Date(parseInt(detail.data.internalDate)).toISOString() : new Date().toISOString()
+        };
+      })
+    );
+
+    res.json({ success: true, messages: detailedMessages });
+  } catch (error: any) {
+    console.error("Gmail List Error:", error);
+    res.status(500).json({ error: "Failed to fetch Gmail messages" });
   }
 }));
 
