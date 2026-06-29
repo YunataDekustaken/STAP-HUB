@@ -843,15 +843,7 @@ export default function SettingsTab({
       )}
 
       {activeSubTab === "admin" && (
-        <AdminSettingsTab
-          currentUser={users.find(u => u.email?.toLowerCase() === "stap.est2526@gmail.com") || users[0]}
-          onUserSwitch={handleUserSwitch}
-          firebaseConnection={getFirebaseConfig()}
-          onUpdateFirebase={handleUpdateFirebase}
-          onResetFirebase={handleResetFirebase}
-          pythonStreamUrl={nodeIp}
-          onUpdateStreamUrl={setNodeIp}
-        />
+        <AdminSettingsTab />
       )}
 
       {/* Add New User Dialog Modal */}
