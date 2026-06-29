@@ -1025,16 +1025,19 @@ app.get("/api/auth/google/callback", asyncHandler(async (req: Request, res: Resp
 
   res.send(`
     <html>
-      <body style="font-family: sans-serif; padding: 40px; line-height: 1.6;">
-        <h2 style="color: #22C55E;">✓ Google Account Connected!</h2>
-        <p>You have successfully authorized the application.</p>
-        ${refreshToken ? `
-          <div style="background: #F1F5F9; padding: 20px; border-radius: 12px; margin: 20px 0;">
-            <p style="font-weight: bold; margin-top: 0;">Copy this REFRESH TOKEN and add it to your GOOGLE_REFRESH_TOKEN environment variable in AI Studio:</p>
-            <code style="word-break: break-all; background: #FFF; padding: 10px; display: block; border: 1px solid #E2E8F0;">${refreshToken}</code>
-          </div>
-        ` : `<p style="color: #64748B;">No new refresh token issued (you may have already authorized). If you need a new one, revoke access in your Google Account settings first.</p>`}
-        <button onclick="window.close()" style="padding: 10px 20px; background: #1E293B; color: white; border: none; border-radius: 8px; cursor: pointer;">Close Window</button>
+      <body style="font-family: sans-serif; padding: 40px; line-height: 1.6; background: #F8FAFC;">
+        <div style="max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 24px; shadow: 0 10px 15px -3px rgba(0,0,0,0.1);">
+          <h2 style="color: #22C55E; margin-top: 0;">✓ Google Account Connected!</h2>
+          <p style="color: #475569;">You have successfully authorized the STAP Traffic Automation Program to access your workspace.</p>
+          ${refreshToken ? `
+            <div style="background: #F1F5F9; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px dashed #CBD5E1;">
+              <p style="font-weight: bold; margin-top: 0; font-size: 14px; color: #1E293B;">Permanent Refresh Token Issued:</p>
+              <code style="word-break: break-all; background: #FFF; padding: 10px; display: block; border: 1px solid #E2E8F0; border-radius: 6px; font-size: 12px; font-family: monospace;">${refreshToken}</code>
+              <p style="font-size: 11px; color: #64748B; margin-bottom: 0; margin-top: 10px;">This token has been securely stored in your Firestore database for background automation.</p>
+            </div>
+          ` : `<p style="color: #64748B;">No new refresh token was issued by Google (you likely have an existing active session). The system will continue using the stored token.</p>`}
+          <button onclick="window.close()" style="padding: 12px 24px; background: #0F172A; color: white; border: none; border-radius: 12px; cursor: pointer; font-weight: bold; transition: all 0.2s;">Close & Return to Dashboard</button>
+        </div>
         <script>
           if (window.opener) {
             window.opener.postMessage({ type: "GOOGLE_AUTH_SUCCESS", refreshToken: "${refreshToken || ''}" }, "*");
@@ -1043,6 +1046,35 @@ app.get("/api/auth/google/callback", asyncHandler(async (req: Request, res: Resp
       </body>
     </html>
   `);
+}));
+
+// --- API ROUTE: Google Drive - Configuration ---
+app.get("/api/google/drive-config", asyncHandler(async (req: Request, res: Response) => {
+  if (!db) return res.json({ success: true, folderId: "" });
+  try {
+    const snap = await db.collection("system").doc("google_drive_config").get();
+    if (snap.exists) {
+      res.json({ success: true, ...snap.data() });
+    } else {
+      res.json({ success: true, folderId: "" });
+    }
+  } catch (err: any) {
+    res.json({ success: true, folderId: "", error: err.message });
+  }
+}));
+
+app.post("/api/google/drive-config", asyncHandler(async (req: Request, res: Response) => {
+  if (!db) return res.status(500).json({ success: false, error: "Database not connected" });
+  try {
+    const { folderId } = req.body;
+    await db.collection("system").doc("google_drive_config").set({ 
+      folderId, 
+      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+    }, { merge: true });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 }));
 
 // --- API ROUTE: Gmail - Send Reply to Footage Request ---
@@ -1233,28 +1265,44 @@ app.post("/api/v1/upload-manual-ledger", asyncHandler(async (req: Request, res: 
 }));
 
 // Legal Routes for standalone access (served as index.html for client routing)
-app.get(["/privacy-policy", "/terms-of-service"], (req, res) => {
+app.get(["/privacy-policy", "/terms-of-service", "/tos", "/privacy"], (req, res) => {
   const distPath = path.join(process.cwd(), "dist");
-  // Check if dist/index.html exists, otherwise we are in dev and it should be handled by vite
-  // But this route is only needed if not handled by vite
-  res.sendFile(path.join(distPath, "index.html"));
+  // Check if we are in production and dist exists
+  const indexPath = path.join(distPath, "index.html");
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    // In dev, the SPA is handled by Vite middleware which is added later
+    // If it falls through here, we just redirect or let it be handled by next()
+    res.redirect("/");
+  }
 });
 
 // Configure Vite or serve static files
 async function configureFrontend() {
   if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("[STAP HUB] Vite development middleware integrated.");
+    } catch (e) {
+      console.warn("[STAP HUB] Vite failed to load (expected in production).");
+    }
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+      console.log("[STAP HUB] Serving production static assets from dist/.");
+    } else {
+      console.warn("[STAP HUB] dist/ directory not found. Is the app built?");
+    }
   }
 }
 
