@@ -283,8 +283,8 @@ export default function AnalyticsTab() {
         refNumber: `REQ-${request.id.substring(0, 8).toUpperCase()}`
       };
 
-      const doc = generateTrafficReport(parsedDataList, metadata);
-      const pdfDataUri = doc.output("datauristring");
+      const reportDoc = generateTrafficReport(parsedDataList, metadata);
+      const pdfDataUri = reportDoc.output("datauristring");
 
       // 2. Update Firestore status
       await setDoc(doc(db, "report_requests", request.id), {

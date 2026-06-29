@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
 import { ParsedTrafficData } from "./csvParser";
 
 export interface ReportMetadata {
@@ -15,7 +15,7 @@ export const generateTrafficReport = (
   data: ParsedTrafficData[],
   metadata: ReportMetadata
 ) => {
-  const doc = new jsPDF() as any;
+  const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
 
   // Header
@@ -67,7 +67,7 @@ export const generateTrafficReport = (
   doc.setFontSize(14);
   doc.text("Executive Summary", 14, 80);
   
-  doc.autoTable({
+  autoTable(doc, {
     startY: 85,
     head: [["Metric", "Value"]],
     body: [
@@ -76,7 +76,7 @@ export const generateTrafficReport = (
       ["Primary Vehicle Classification", Object.entries(vehicleCounts).sort((a,b) => b[1]-a[1])[0]?.[0] || "N/A"]
     ],
     theme: 'striped',
-    headStyles: { fillStyle: 'dark', fillColor: [78, 98, 144] }
+    headStyles: { fillColor: [78, 98, 144] }
   });
 
   // Vehicle Breakdown Table
@@ -89,7 +89,7 @@ export const generateTrafficReport = (
     `${((count / totalVehicles) * 100).toFixed(1)}%`
   ]);
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: 30,
     head: [["Vehicle Type", "Count", "Percentage Share"]],
     body: vehicleRows,
@@ -99,16 +99,15 @@ export const generateTrafficReport = (
 
   // Incident Summary if it was an incident report summary
   if (metadata.type.includes("Incident")) {
-    // In a real app, we'd fetch actual incidents here or pass them in
     doc.addPage();
     doc.text("Incident Summary", 14, 22);
     doc.text("Data extracted from incident_reports collection.", 14, 30);
-    // Placeholder for actual incident data
   }
 
   // Certification Block for Certified Traffic Log
   if (metadata.certifiedBy) {
-    const finalY = (doc as any).lastAutoTable.finalY + 30;
+    const lastY = (doc as any).lastAutoTable.finalY || 30;
+    const finalY = lastY + 30;
     doc.setDrawColor(203, 213, 225);
     doc.line(14, finalY, 100, finalY);
     doc.setFontSize(10);
@@ -131,7 +130,7 @@ export const generateTrafficReport = (
   }
 
   // Footer on every page
-  const totalPages = doc.internal.getNumberOfPages();
+  const totalPages = (doc as any).internal.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
     doc.setFontSize(8);
