@@ -107,8 +107,6 @@ export default function EmailsTab() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [isFetchingLive, setIsFetchingLive] = useState(false);
-  const [liveError, setLiveError] = useState<string | null>(null);
 
   // Reply Composer modal
   const [replyTarget, setReplyTarget] = useState<ReceivedEmail | null>(null);
@@ -117,44 +115,10 @@ export default function EmailsTab() {
   const [isSendingReply, setIsSendingReply] = useState(false);
   const [replyMessage, setReplyMessage] = useState("");
 
-  const fetchLiveInbox = async () => {
-    setIsFetchingLive(true);
-    setLiveError(null);
-    try {
-      const response = await fetch("/api/gmail/messages");
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to fetch live inbox");
-      }
-
-      if (data.success && data.messages) {
-        const mappedMails: ReceivedEmail[] = data.messages.map((m: any) => ({
-          id: m.id,
-          fromName: m.from.split("<")[0].trim().replace(/^"|"$/g, '') || "Unknown",
-          fromEmail: m.from.match(/<(.+)>/)?.[1] || m.from,
-          subject: m.subject,
-          dateReceived: m.timestamp,
-          body: m.body || m.snippet,
-          status: "UNREAD"
-        }));
-        setReceivedMails(mappedMails);
-      }
-    } catch (err: any) {
-      console.warn("Gmail API Fetch error:", err);
-      setLiveError("Connect to Google in Settings to view live inbox.");
-    } finally {
-      setIsFetchingLive(false);
-    }
-  };
-
   const activeTemplate = templates.find((t) => t.id === activeTemplateId) || templates[0];
 
   // Sync templates and sent/received mails from Firestore (or mock)
   useEffect(() => {
-    // Initial fetch of live data
-    fetchLiveInbox();
-
     const { db } = getFirebaseInstances();
     
     // Sync templates
@@ -206,16 +170,38 @@ export default function EmailsTab() {
       if (savedSent) setSentMails(JSON.parse(savedSent));
     }
 
-    // Sync received emails - Modified to support live refresh
+    // Sync received emails
     let unsubReceived = () => {};
     if (db) {
       unsubReceived = onSnapshot(collection(db, "received_emails"), (snap) => {
-        if (!snap.empty && !isFetchingLive) { // Only use firestore if we aren't live fetching
+        if (!snap.empty) {
           const mails = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ReceivedEmail));
           mails.sort((a, b) => new Date(b.dateReceived).getTime() - new Date(a.dateReceived).getTime());
           setReceivedMails(mails);
+        } else {
+          // Initialize mock received emails if empty
+          INITIAL_RECEIVED_EMAILS.forEach(async (mail) => {
+            await setDoc(doc(db, "received_emails", mail.id), mail);
+          });
+        }
+      }, () => {
+        // Fallback
+        const savedRecv = localStorage.getItem("stap_received_emails");
+        if (savedRecv) {
+          setReceivedMails(JSON.parse(savedRecv));
+        } else {
+          setReceivedMails(INITIAL_RECEIVED_EMAILS);
+          localStorage.setItem("stap_received_emails", JSON.stringify(INITIAL_RECEIVED_EMAILS));
         }
       });
+    } else {
+      const savedRecv = localStorage.getItem("stap_received_emails");
+      if (savedRecv) {
+        setReceivedMails(JSON.parse(savedRecv));
+      } else {
+        setReceivedMails(INITIAL_RECEIVED_EMAILS);
+        localStorage.setItem("stap_received_emails", JSON.stringify(INITIAL_RECEIVED_EMAILS));
+      }
     }
 
     return () => {
@@ -424,16 +410,6 @@ export default function EmailsTab() {
                 </span>
               )}
             </button>
-            {subTab === "RECEIVED" && (
-              <button
-                onClick={fetchLiveInbox}
-                disabled={isFetchingLive}
-                className="px-2 text-slate-400 hover:text-blue-400 transition-colors disabled:opacity-50"
-                title="Fetch Live Gmail Inbox"
-              >
-                <Loader2 className={`h-3.5 w-3.5 ${isFetchingLive ? "animate-spin" : ""}`} />
-              </button>
-            )}
             <button
               onClick={() => setSubTab("TEMPLATES")}
               className={`flex-1 md:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold rounded-lg transition-all ${

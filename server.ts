@@ -2,10 +2,8 @@ import express, { Request, Response } from "express";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
-import admin from "firebase-admin";
+import * as admin from "firebase-admin";
 import { google } from "googleapis";
-
-console.log("[STAP HUB] server.ts is initializing...");
 
 dotenv.config();
 
@@ -292,16 +290,6 @@ async function loadStateFromFirestore() {
 
 const app = express();
 const PORT = 3000;
-
-// Simple Health Check for Vercel debugging
-app.get("/api/health", (req, res) => {
-  res.json({ 
-    status: "ok", 
-    vercel: !!process.env.VERCEL,
-    node_env: process.env.NODE_ENV,
-    time: new Date().toISOString()
-  });
-});
 
 // Let json body parser accept up to 15mb for carrying base64 image data safely
 app.use(express.json({ limit: "15mb" }));
@@ -999,7 +987,6 @@ app.get("/api/auth/google/url", (req: Request, res: Response) => {
     const oauth2Client = createOAuth2Client(req);
     const scopes = [
       "https://www.googleapis.com/auth/gmail.send",
-      "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/drive.readonly",
       "https://www.googleapis.com/auth/userinfo.email"
     ];
@@ -1037,19 +1024,16 @@ app.get("/api/auth/google/callback", asyncHandler(async (req: Request, res: Resp
 
   res.send(`
     <html>
-      <body style="font-family: sans-serif; padding: 40px; line-height: 1.6; background: #F8FAFC;">
-        <div style="max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 24px; shadow: 0 10px 15px -3px rgba(0,0,0,0.1);">
-          <h2 style="color: #22C55E; margin-top: 0;">✓ Google Account Connected!</h2>
-          <p style="color: #475569;">You have successfully authorized the STAP Traffic Automation Program to access your workspace.</p>
-          ${refreshToken ? `
-            <div style="background: #F1F5F9; padding: 20px; border-radius: 12px; margin: 20px 0; border: 1px dashed #CBD5E1;">
-              <p style="font-weight: bold; margin-top: 0; font-size: 14px; color: #1E293B;">Permanent Refresh Token Issued:</p>
-              <code style="word-break: break-all; background: #FFF; padding: 10px; display: block; border: 1px solid #E2E8F0; border-radius: 6px; font-size: 12px; font-family: monospace;">${refreshToken}</code>
-              <p style="font-size: 11px; color: #64748B; margin-bottom: 0; margin-top: 10px;">This token has been securely stored in your Firestore database for background automation.</p>
-            </div>
-          ` : `<p style="color: #64748B;">No new refresh token was issued by Google (you likely have an existing active session). The system will continue using the stored token.</p>`}
-          <button onclick="window.close()" style="padding: 12px 24px; background: #0F172A; color: white; border: none; border-radius: 12px; cursor: pointer; font-weight: bold; transition: all 0.2s;">Close & Return to Dashboard</button>
-        </div>
+      <body style="font-family: sans-serif; padding: 40px; line-height: 1.6;">
+        <h2 style="color: #22C55E;">✓ Google Account Connected!</h2>
+        <p>You have successfully authorized the application.</p>
+        ${refreshToken ? `
+          <div style="background: #F1F5F9; padding: 20px; border-radius: 12px; margin: 20px 0;">
+            <p style="font-weight: bold; margin-top: 0;">Copy this REFRESH TOKEN and add it to your GOOGLE_REFRESH_TOKEN environment variable in AI Studio:</p>
+            <code style="word-break: break-all; background: #FFF; padding: 10px; display: block; border: 1px solid #E2E8F0;">${refreshToken}</code>
+          </div>
+        ` : `<p style="color: #64748B;">No new refresh token issued (you may have already authorized). If you need a new one, revoke access in your Google Account settings first.</p>`}
+        <button onclick="window.close()" style="padding: 10px 20px; background: #1E293B; color: white; border: none; border-radius: 8px; cursor: pointer;">Close Window</button>
         <script>
           if (window.opener) {
             window.opener.postMessage({ type: "GOOGLE_AUTH_SUCCESS", refreshToken: "${refreshToken || ''}" }, "*");
@@ -1058,35 +1042,6 @@ app.get("/api/auth/google/callback", asyncHandler(async (req: Request, res: Resp
       </body>
     </html>
   `);
-}));
-
-// --- API ROUTE: Google Drive - Configuration ---
-app.get("/api/google/drive-config", asyncHandler(async (req: Request, res: Response) => {
-  if (!db) return res.json({ success: true, folderId: "" });
-  try {
-    const snap = await db.collection("system").doc("google_drive_config").get();
-    if (snap.exists) {
-      res.json({ success: true, ...snap.data() });
-    } else {
-      res.json({ success: true, folderId: "" });
-    }
-  } catch (err: any) {
-    res.json({ success: true, folderId: "", error: err.message });
-  }
-}));
-
-app.post("/api/google/drive-config", asyncHandler(async (req: Request, res: Response) => {
-  if (!db) return res.status(500).json({ success: false, error: "Database not connected" });
-  try {
-    const { folderId } = req.body;
-    await db.collection("system").doc("google_drive_config").set({ 
-      folderId, 
-      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
-    }, { merge: true });
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
 }));
 
 // --- API ROUTE: Gmail - Send Reply to Footage Request ---
@@ -1108,9 +1063,10 @@ app.post("/api/footage-requests/reply", asyncHandler(async (req: Request, res: R
       "MIME-Version: 1.0",
       `Subject: ${utf8Subject}`,
       "",
-      body,
+      body
     ];
     const message = messageParts.join("\n");
+
     const encodedMessage = Buffer.from(message)
       .toString("base64")
       .replace(/\+/g, "-")
@@ -1126,70 +1082,6 @@ app.post("/api/footage-requests/reply", asyncHandler(async (req: Request, res: R
   } catch (err: any) {
     console.error("[STAP HUB] Gmail Send Error:", err);
     res.status(500).json({ success: false, error: err.message });
-  }
-}));
-
-// Fetch Live Gmail Inbox Messages
-app.get("/api/gmail/messages", asyncHandler(async (req: Request, res: Response) => {
-  const auth = await getAutoRefreshingAuthClient();
-  if (!auth) {
-    return res.status(401).json({ error: "Google account not connected" });
-  }
-
-  try {
-    const gmail = google.gmail({ version: "v1", auth });
-    
-    // 1. List latest 15 messages
-    const listRes = await gmail.users.messages.list({
-      userId: "me",
-      maxResults: 15,
-      q: "-from:me" // Exclude sent mail to show actual inbox
-    });
-
-    const messages = listRes.data.messages || [];
-    const detailedMessages = await Promise.all(
-      messages.map(async (msg) => {
-        const detail = await gmail.users.messages.get({
-          userId: "me",
-          id: msg.id!,
-          format: "full"
-        });
-
-        const headers = detail.data.payload?.headers || [];
-        const subject = headers.find(h => h.name === "Subject")?.value || "(No Subject)";
-        const from = headers.find(h => h.name === "From")?.value || "Unknown Sender";
-        const date = headers.find(h => h.name === "Date")?.value || "";
-
-        // Simple body extraction
-        let body = "";
-        const parts = detail.data.payload?.parts || [];
-        if (detail.data.payload?.body?.data) {
-          body = Buffer.from(detail.data.payload.body.data, 'base64').toString();
-        } else if (parts.length > 0) {
-          // Find first text/plain or text/html part
-          const textPart = parts.find(p => p.mimeType === "text/plain") || parts[0];
-          if (textPart.body?.data) {
-            body = Buffer.from(textPart.body.data, 'base64').toString();
-          }
-        }
-
-        return {
-          id: detail.data.id,
-          threadId: detail.data.threadId,
-          subject,
-          from,
-          date,
-          snippet: detail.data.snippet,
-          body: body.substring(0, 5000), // Cap size
-          timestamp: detail.data.internalDate ? new Date(parseInt(detail.data.internalDate)).toISOString() : new Date().toISOString()
-        };
-      })
-    );
-
-    res.json({ success: true, messages: detailedMessages });
-  } catch (error: any) {
-    console.error("Gmail List Error:", error);
-    res.status(500).json({ error: "Failed to fetch Gmail messages" });
   }
 }));
 
@@ -1277,44 +1169,28 @@ app.post("/api/v1/upload-manual-ledger", asyncHandler(async (req: Request, res: 
 }));
 
 // Legal Routes for standalone access (served as index.html for client routing)
-app.get(["/privacy-policy", "/terms-of-service", "/tos", "/privacy"], (req, res) => {
+app.get(["/privacy-policy", "/terms-of-service"], (req, res) => {
   const distPath = path.join(process.cwd(), "dist");
-  // Check if we are in production and dist exists
-  const indexPath = path.join(distPath, "index.html");
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    // In dev, the SPA is handled by Vite middleware which is added later
-    // If it falls through here, we just redirect or let it be handled by next()
-    res.redirect("/");
-  }
+  // Check if dist/index.html exists, otherwise we are in dev and it should be handled by vite
+  // But this route is only needed if not handled by vite
+  res.sendFile(path.join(distPath, "index.html"));
 });
 
 // Configure Vite or serve static files
 async function configureFrontend() {
   if (process.env.NODE_ENV !== "production") {
-    try {
-      const { createServer: createViteServer } = await import("vite");
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: "spa",
-      });
-      app.use(vite.middlewares);
-      console.log("[STAP HUB] Vite development middleware integrated.");
-    } catch (e) {
-      console.warn("[STAP HUB] Vite failed to load (expected in production).");
-    }
+    const { createServer: createViteServer } = await import("vite");
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get("*", (req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
-      });
-      console.log("[STAP HUB] Serving production static assets from dist/.");
-    } else {
-      console.warn("[STAP HUB] dist/ directory not found. Is the app built?");
-    }
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
   }
 }
 
@@ -1323,8 +1199,6 @@ if (!process.env.VERCEL) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`STAP Traffic Hub Express server online at http://0.0.0.0:${PORT}`);
     });
-  }).catch(err => {
-    console.error("[STAP HUB] Failed to start frontend middleware:", err);
   });
 } else {
   console.log("[STAP HUB] Running on Vercel Serverless Platform safely.");
