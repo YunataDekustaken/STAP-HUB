@@ -1088,10 +1088,10 @@ export default function App() {
   }, [pathname]);
 
   // Standalone Legal Pages for Google Verification
-  if (pathname === "/privacy-policy") {
+  if (pathname.startsWith("/privacy-policy")) {
     return <div className="min-h-screen bg-slate-50 overflow-auto"><LegalTab standalone defaultSection="PRIVACY" /></div>;
   }
-  if (pathname === "/terms-of-service") {
+  if (pathname.startsWith("/terms-of-service")) {
     return <div className="min-h-screen bg-slate-50 overflow-auto"><LegalTab standalone defaultSection="TERMS" /></div>;
   }
 
