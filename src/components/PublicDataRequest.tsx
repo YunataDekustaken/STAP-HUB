@@ -1,6 +1,8 @@
 import React, { useState } from "react";
-import { FileText, Send, CheckCircle, Search, Clock, Calendar, ShieldAlert, Check } from "lucide-react";
+import { FileText, Send, CheckCircle, Search, Clock, Calendar, ShieldAlert, Check, Download, BarChart2, Car, TrendingUp, AlertCircle, RefreshCw } from "lucide-react";
 import { FootageRequest } from "./FootageRequestsTab";
+import { generateTrafficReport, ReportMetadata } from "../utils/reportGenerator";
+import { parseTrafficCSV, ParsedTrafficData } from "../utils/csvParser";
 
 export interface ReportRequestSubmission {
   type: string;
@@ -44,6 +46,64 @@ export default function PublicDataRequest({ requests, onSubmitRequest, onSubmitR
   const [searchQuery, setSearchQuery] = useState("");
   const [trackResult, setTrackResult] = useState<FootageRequest | null>(null);
   const [searched, setSearched] = useState(false);
+
+  // Public On-Demand Stats State
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [ledgers, setLedgers] = useState<any[]>([]);
+  const [isLoadingLedgers, setIsLoadingLedgers] = useState(false);
+
+  const fetchLedgers = async () => {
+    setIsLoadingLedgers(true);
+    try {
+      const res = await fetch("/api/v1/ledgers");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          // Filter for last 7 days only for public view
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          const filtered = data.ledgers.filter((l: any) => new Date(l.uploadedAt) >= sevenDaysAgo);
+          setLedgers(filtered);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch public ledgers:", err);
+    } finally {
+      setIsLoadingLedgers(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchLedgers();
+  }, []);
+
+  const handleDownloadPublicReport = async (type: string) => {
+    if (ledgers.length === 0) {
+      alert("No recent traffic data available for download.");
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const parsedDataList = ledgers.map(l => {
+        if (!l.csvData) return null;
+        try { return parseTrafficCSV(l.csvData); } catch (e) { return null; }
+      }).filter(Boolean) as ParsedTrafficData[];
+
+      const metadata: ReportMetadata = {
+        type: `${type} (Public Copy)`,
+        dateRange: "Last 7 Days",
+        generatedBy: "STAP Public Portal",
+        refNumber: `PUB-${Date.now().toString(36).toUpperCase()}`
+      };
+
+      const doc = generateTrafficReport(parsedDataList, metadata);
+      doc.save(`${type.replace(/\s+/g, "_")}_Public_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (err) {
+      console.error("Failed to generate public report:", err);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   // Form validation & submission
   const handleSubmit = (e: React.FormEvent) => {
@@ -156,7 +216,56 @@ export default function PublicDataRequest({ requests, onSubmitRequest, onSubmitR
       </div>
 
       {activeView === "REPORT_FORM" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
+        <div className="space-y-8 animate-fadeIn">
+          {/* Public On-Demand Stats Section */}
+          <div className="bg-[#1E293B] rounded-2xl p-6 shadow-xl border border-slate-800 space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-rose-500/20 rounded-lg text-rose-400">
+                    <TrendingUp className="h-5 w-5" />
+                  </span>
+                  <h3 className="text-base font-black text-white uppercase tracking-tight">On-Demand Traffic Summaries</h3>
+                </div>
+                <p className="text-xs text-slate-400 font-medium">Download instant, non-certified traffic statistics for the current week.</p>
+              </div>
+              <button 
+                onClick={fetchLedgers}
+                disabled={isLoadingLedgers}
+                className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-black uppercase transition-all"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isLoadingLedgers ? 'animate-spin' : ''}`} />
+                Refresh Data
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { label: "Daily Summary", icon: BarChart2, color: "text-indigo-400", bg: "bg-indigo-400/10" },
+                { label: "Vehicle Breakdown", icon: Car, color: "text-emerald-400", bg: "bg-emerald-400/10" },
+                { label: "Range Comparison", icon: TrendingUp, color: "text-blue-400", bg: "bg-blue-400/10" },
+                { label: "Incident Summary", icon: AlertCircle, color: "text-amber-400", bg: "bg-amber-400/10" }
+              ].map((report) => (
+                <button
+                  key={report.label}
+                  onClick={() => handleDownloadPublicReport(report.label)}
+                  disabled={isGenerating || ledgers.length === 0}
+                  className="bg-slate-800/50 hover:bg-slate-800 border border-slate-700 p-4 rounded-xl flex flex-col items-center gap-3 transition-all group active:scale-95 disabled:opacity-50"
+                >
+                  <div className={`p-3 ${report.bg} ${report.color} rounded-xl group-hover:scale-110 transition-all`}>
+                    <report.icon className="h-6 w-6" />
+                  </div>
+                  <span className="text-[10px] font-black text-slate-300 uppercase tracking-wider">{report.label}</span>
+                  <Download className="h-4 w-4 text-slate-500 group-hover:text-white mt-auto" />
+                </button>
+              ))}
+            </div>
+            {ledgers.length === 0 && !isLoadingLedgers && (
+              <p className="text-center text-[10px] text-slate-500 font-bold italic">No traffic data recorded in the last 7 days.</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
           <div className="lg:col-span-2 space-y-6">
             {reportSuccess && (
               <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-2xl flex items-start gap-4 shadow-sm">
@@ -296,6 +405,7 @@ export default function PublicDataRequest({ requests, onSubmitRequest, onSubmitR
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {activeView === "FORM" && (

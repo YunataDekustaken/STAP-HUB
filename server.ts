@@ -752,6 +752,124 @@ app.get("/api/v1/proxy-python-status", asyncHandler(async (req: Request, res: Re
 
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || "";
 
+// --- API ROUTE: Gmail - Send Report with Attachment ---
+app.post("/api/gmail/send-report", asyncHandler(async (req: Request, res: Response) => {
+  const { to, subject, body, attachment, filename } = req.body;
+  if (!to || !body) {
+    return res.status(400).json({ success: false, error: "Missing 'to' or 'body' in request." });
+  }
+
+  try {
+    const auth = await getAutoRefreshingAuthClient();
+    const gmail = google.gmail({ version: "v1", auth });
+    
+    const boundary = "stap_hub_boundary_" + Date.now();
+    const utf8Subject = `=?utf-8?B?${Buffer.from(subject || "STAP Hub Report").toString("base64")}?=`;
+
+    let message = [
+      `To: ${to}`,
+      `Subject: ${utf8Subject}`,
+      "MIME-Version: 1.0",
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      "Content-Type: text/html; charset=utf-8",
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from(body).toString("base64"),
+      ""
+    ].join("\r\n");
+
+    if (attachment) {
+      message += [
+        `--${boundary}`,
+        `Content-Type: application/pdf; name="${filename || 'report.pdf'}"`,
+        "Content-Transfer-Encoding: base64",
+        `Content-Disposition: attachment; filename="${filename || 'report.pdf'}"`,
+        "",
+        attachment, // Assuming base64 data
+        ""
+      ].join("\r\n");
+    }
+
+    message += `--${boundary}--`;
+
+    const encodedMessage = Buffer.from(message)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw: encodedMessage },
+    });
+
+    res.json({ success: true, message: "Email sent successfully with attachment." });
+  } catch (err: any) {
+    console.error("[STAP HUB] Gmail Send Report Error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}));
+
+// --- API ROUTE: Google Drive - Upload File ---
+app.post("/api/google/drive-upload", asyncHandler(async (req: Request, res: Response) => {
+  const { filename, content, mimeType, folderName } = req.body;
+  if (!filename || !content) {
+    return res.status(400).json({ success: false, error: "Missing filename or content." });
+  }
+
+  try {
+    const auth = await getAutoRefreshingAuthClient();
+    const drive = google.drive({ version: "v3", auth });
+
+    // 1. Find or create the target folder
+    let parentId: string | undefined;
+    const targetFolderName = folderName || "STAP Reports";
+    
+    const folderSearch = await drive.files.list({
+      q: `name = '${targetFolderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: "files(id)",
+      pageSize: 1
+    });
+
+    if (folderSearch.data.files && folderSearch.data.files.length > 0) {
+      parentId = folderSearch.data.files[0].id!;
+    } else {
+      const folder = await drive.files.create({
+        requestBody: {
+          name: targetFolderName,
+          mimeType: "application/vnd.google-apps.folder"
+        },
+        fields: "id"
+      });
+      parentId = folder.data.id!;
+    }
+
+    // 2. Upload the file
+    const stream = new (require("stream").Readable)();
+    stream.push(Buffer.from(content, "base64"));
+    stream.push(null);
+
+    const response = await drive.files.create({
+      requestBody: {
+        name: filename,
+        parents: parentId ? [parentId] : []
+      },
+      media: {
+        mimeType: mimeType || "application/pdf",
+        body: stream
+      },
+      fields: "id, webViewLink"
+    });
+
+    res.json({ success: true, fileId: response.data.id, link: response.data.webViewLink });
+  } catch (err: any) {
+    console.error("[STAP HUB] Drive Upload Error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+}));
+
 // --- API ROUTE: Google Auth - Status ---
 app.get("/api/auth/google/status", asyncHandler(async (req: Request, res: Response) => {
   try {
