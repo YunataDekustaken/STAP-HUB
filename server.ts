@@ -2,8 +2,10 @@ import express, { Request, Response } from "express";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
-import * as admin from "firebase-admin";
+import admin from "firebase-admin";
 import { google } from "googleapis";
+
+console.log("[STAP HUB] server.ts is initializing...");
 
 dotenv.config();
 
@@ -290,6 +292,16 @@ async function loadStateFromFirestore() {
 
 const app = express();
 const PORT = 3000;
+
+// Simple Health Check for Vercel debugging
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    vercel: !!process.env.VERCEL,
+    node_env: process.env.NODE_ENV,
+    time: new Date().toISOString()
+  });
+});
 
 // Let json body parser accept up to 15mb for carrying base64 image data safely
 app.use(express.json({ limit: "15mb" }));
@@ -1311,6 +1323,8 @@ if (!process.env.VERCEL) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`STAP Traffic Hub Express server online at http://0.0.0.0:${PORT}`);
     });
+  }).catch(err => {
+    console.error("[STAP HUB] Failed to start frontend middleware:", err);
   });
 } else {
   console.log("[STAP HUB] Running on Vercel Serverless Platform safely.");
