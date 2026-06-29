@@ -143,7 +143,7 @@ app.get("/api/auth/google/status", async (req: Request, res: Response) => {
 });
 
 // --- API ROUTE: Weather Configuration & Data ---
-app.get("/api/weather/config", async (req: Request, res: Response) => {
+app.get(["/api/weather/config", "/weather/config"], async (req: Request, res: Response) => {
   try {
     const snap = await firestoreREST("GET", "system/weather_config");
     if (snap && snap.fields?.location?.stringValue) {
@@ -155,7 +155,7 @@ app.get("/api/weather/config", async (req: Request, res: Response) => {
   }
 });
 
-app.post("/api/weather/config", async (req: Request, res: Response) => {
+app.post(["/api/weather/config", "/weather/config"], async (req: Request, res: Response) => {
   try {
     const { location } = req.body;
     if (!location) return res.status(400).json({ success: false, error: "Missing location" });
@@ -172,13 +172,25 @@ app.post("/api/weather/config", async (req: Request, res: Response) => {
   }
 });
 
-app.get("/api/weather/forecast", async (req: Request, res: Response) => {
+app.get(["/api/weather/forecast", "/weather/forecast"], async (req: Request, res: Response) => {
   try {
     if (!WEATHER_API_KEY) {
       return res.status(500).json({ success: false, error: "Weather API Key not configured." });
     }
 
-    const location = req.query.location as string || process.env.WEATHER_LOCATION || "Marikina City";
+    let location = req.query.location as string || process.env.WEATHER_LOCATION || "Marikina City";
+
+    // Try to get dynamic location from Firestore REST if not provided in query
+    if (!req.query.location) {
+      try {
+        const snap = await firestoreREST("GET", "system/weather_config");
+        if (snap && snap.fields?.location?.stringValue) {
+          location = snap.fields.location.stringValue;
+        }
+      } catch (e) {
+        // Fallback to default
+      }
+    }
 
     const response = await fetch(`http://api.weatherapi.com/v1/forecast.json?key=${WEATHER_API_KEY}&q=${encodeURIComponent(location)}&days=3&aqi=no&alerts=no`);
     if (!response.ok) {

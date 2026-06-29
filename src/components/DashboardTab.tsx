@@ -24,13 +24,14 @@ import { motion, AnimatePresence } from "motion/react";
 import PublicAnalytics from "./PublicAnalytics";
 import { CloudSun, Wind, Droplets, Thermometer, Calendar } from "lucide-react";
 
-function RegionalWeather() {
+function RegionalWeather({ location: propLocation }: { location?: string }) {
   const [weatherData, setWeatherData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchWeather = async () => {
+      setLoading(true);
       try {
         const res = await fetch("/api/weather/forecast");
         const data = await res.json();
@@ -46,7 +47,7 @@ function RegionalWeather() {
       }
     };
     fetchWeather();
-  }, []);
+  }, [propLocation]);
 
   if (loading) return (
     <div className="bg-white rounded-3xl p-10 border border-slate-200 shadow-sm animate-pulse flex flex-col items-center justify-center space-y-4">
@@ -577,7 +578,7 @@ export default function DashboardTab({
 
       {/* Regional Weather Section (WeatherAPI.com) */}
       <div className="pt-2 pb-6">
-        <RegionalWeather />
+        <RegionalWeather location={weatherLocation} />
       </div>
 
       {/* Video Preview Modal */}
