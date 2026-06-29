@@ -8,6 +8,7 @@ import IncidentReportsTab, { IncidentReport } from "./components/IncidentReports
 import AnnouncementsTab, { Announcement } from "./components/AnnouncementsTab";
 import AnalyticsTab from "./components/AnalyticsTab";
 import GoogleDriveTab from "./components/GoogleDriveTab";
+import EmailsTab from "./components/EmailsTab";
 import PublicDataRequest, { ReportRequestSubmission } from "./components/PublicDataRequest";
 import PublicIncidentReport from "./components/PublicIncidentReport";
 import SettingsTab from "./components/SettingsTab";
@@ -1363,6 +1364,10 @@ export default function App() {
             
             {activeTab === "CLOUD_ARCHIVE" && isAdmin && (
               <GoogleDriveTab />
+            )}
+
+            {activeTab === "EMAILS" && isAdmin && (
+              <EmailsTab />
             )}
 
             {/* Public-only Tabs */}

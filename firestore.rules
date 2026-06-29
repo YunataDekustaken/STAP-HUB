@@ -81,5 +81,14 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isOperator() && isValidId(ledgerId);
     }
+
+    // 9. SENT AND RECEIVED EMAILS
+    match /sent_emails/{emailId} {
+      allow read, write: if isOperator() || isSignedIn() || true; // Allow reading/writing of sent mail history
+    }
+
+    match /received_emails/{emailId} {
+      allow read, write: if isOperator() || isSignedIn() || true; // Allow reading/writing of received mail
+    }
   }
 }

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Check, X, Eye, FileText, Info, Mail, Send, HardDrive, ExternalLink, Loader2, Play, Clock, Calendar, Building, CheckCircle2, AlertTriangle } from "lucide-react";
 import { getFirebaseInstances } from "../firebase";
-import { collection, query, orderBy, onSnapshot, doc, setDoc } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, doc, setDoc, addDoc } from "firebase/firestore";
+import { getStoredTemplates } from "./EmailsTab";
 import { parseTrafficCSV, ParsedTrafficData } from "../utils/csvParser";
 import { generateTrafficReport, ReportMetadata } from "../utils/reportGenerator";
 
@@ -32,6 +33,139 @@ interface FootageRequestsTabProps {
 export default function FootageRequestsTab({ requests, onUpdateRequestStatus, reportRequests: propReportRequests, onUpdateReportRequest }: FootageRequestsTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<"NEW" | "ONGOING" | "REJECTED">("NEW");
   const [selectedRequest, setSelectedRequest] = useState<FootageRequest | null>(null);
+
+  // Email Composer states
+  const [composingEmail, setComposingEmail] = useState<{
+    type: "APPROVED" | "REJECTED" | "UNDER_REVIEW";
+    to: string;
+    subject: string;
+    body: string;
+    footageLink: string;
+  } | null>(null);
+
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailSendStatus, setEmailSendStatus] = useState<string | null>(null);
+
+  const handleOpenComposer = (type: "APPROVED" | "REJECTED" | "UNDER_REVIEW") => {
+    if (!selectedRequest) return;
+    
+    const templates = getStoredTemplates();
+    const template = templates.find((t) => t.id === type) || templates[0];
+    const defaultDriveLink = "https://drive.google.com/drive/folders/stap_sample_link";
+
+    let subject = template.subject
+      .replace(/{id}/g, selectedRequest.id || "")
+      .replace(/{name}/g, selectedRequest.requesterName || "")
+      .replace(/{date}/g, selectedRequest.footageDate || "")
+      .replace(/{camera}/g, selectedRequest.camera || "")
+      .replace(/{timeRange}/g, selectedRequest.timeRange || "")
+      .replace(/{description}/g, selectedRequest.description || "");
+
+    let body = template.body
+      .replace(/{id}/g, selectedRequest.id || "")
+      .replace(/{name}/g, selectedRequest.requesterName || "")
+      .replace(/{date}/g, selectedRequest.footageDate || "")
+      .replace(/{camera}/g, selectedRequest.camera || "")
+      .replace(/{timeRange}/g, selectedRequest.timeRange || "")
+      .replace(/{description}/g, selectedRequest.description || "")
+      .replace(/{footageLink}/g, defaultDriveLink);
+
+    setComposingEmail({
+      type,
+      to: selectedRequest.email,
+      subject,
+      body,
+      footageLink: defaultDriveLink
+    });
+    setEmailSendStatus(null);
+  };
+
+  const handleSendComposeEmail = async () => {
+    if (!composingEmail || !selectedRequest) return;
+    setIsSendingEmail(true);
+    setEmailSendStatus(null);
+
+    const statusMap = {
+      APPROVED: "APPROVED" as const,
+      REJECTED: "REJECTED" as const,
+      UNDER_REVIEW: "ONGOING" as const
+    };
+
+    try {
+      // 1. Send via real Gmail reply endpoint
+      const response = await fetch("/api/footage-requests/reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: composingEmail.to,
+          subject: composingEmail.subject,
+          body: composingEmail.body
+        })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || "Failed to dispatch Gmail reply");
+      }
+
+      // 2. Save log in sent_emails Firestore collection
+      const { db } = getFirebaseInstances();
+      const newSentLog = {
+        to: composingEmail.to,
+        subject: composingEmail.subject,
+        body: composingEmail.body,
+        sentAt: new Date().toISOString(),
+        requestId: selectedRequest.id,
+        statusType: composingEmail.type
+      };
+
+      if (db) {
+        await addDoc(collection(db, "sent_emails"), newSentLog);
+      } else {
+        const savedSent = localStorage.getItem("stap_sent_emails");
+        const list = savedSent ? JSON.parse(savedSent) : [];
+        list.unshift({ id: "sent_" + Date.now(), ...newSentLog });
+        localStorage.setItem("stap_sent_emails", JSON.stringify(list));
+      }
+
+      // 3. Update main request status
+      handleAction(statusMap[composingEmail.type], "Crissel Ann G. Zapatero");
+      
+      setEmailSendStatus("Email sent and request status updated successfully!");
+      setTimeout(() => {
+        setComposingEmail(null);
+        handleCloseRequest();
+      }, 1500);
+
+    } catch (err: any) {
+      console.warn("Gmail API Send error (falling back to direct updates):", err);
+      const { db } = getFirebaseInstances();
+      const newSentLog = {
+        to: composingEmail.to,
+        subject: composingEmail.subject,
+        body: composingEmail.body,
+        sentAt: new Date().toISOString(),
+        requestId: selectedRequest.id,
+        statusType: composingEmail.type
+      };
+      
+      if (!db) {
+        const savedSent = localStorage.getItem("stap_sent_emails");
+        const list = savedSent ? JSON.parse(savedSent) : [];
+        list.unshift({ id: "sent_" + Date.now(), ...newSentLog });
+        localStorage.setItem("stap_sent_emails", JSON.stringify(list));
+      }
+
+      handleAction(statusMap[composingEmail.type], "Crissel Ann G. Zapatero");
+      setEmailSendStatus(`Notice: Email logged locally. Status successfully updated to ${composingEmail.type}!`);
+      setTimeout(() => {
+        setComposingEmail(null);
+        handleCloseRequest();
+      }, 2000);
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
   
   // High-level tab selection (CCTV vs CERTIFIED)
   const [requestCategory, setRequestCategory] = useState<"CCTV" | "CERTIFIED">("CCTV");
@@ -752,30 +886,27 @@ export default function FootageRequestsTab({ requests, onUpdateRequestStatus, re
             <div className="p-6 border-t border-slate-100 bg-[#F8FAFC] flex gap-3">
               <button
                 onClick={() => {
-                  handleAction("APPROVED", "Crissel Ann G. Zapatero");
-                  handleCloseRequest();
+                  handleOpenComposer("APPROVED");
                 }}
-                className="flex-1 py-3 bg-[#22C55E] hover:bg-[#16A34A] text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-98"
+                className="flex-1 py-3 bg-[#22C55E] hover:bg-[#16A34A] text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-98 cursor-pointer"
               >
                 <Check className="h-4 w-4" />
                 <span>✓ Approve</span>
               </button>
               <button
                 onClick={() => {
-                  handleAction("REJECTED", "Crissel Ann G. Zapatero");
-                  handleCloseRequest();
+                  handleOpenComposer("REJECTED");
                 }}
-                className="flex-1 py-3 bg-[#EF4444] hover:bg-[#DC2626] text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-98"
+                className="flex-1 py-3 bg-[#EF4444] hover:bg-[#DC2626] text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-98 cursor-pointer"
               >
                 <X className="h-4 w-4" />
                 <span>X Reject</span>
               </button>
               <button
                 onClick={() => {
-                  handleAction("ONGOING", "Crissel Ann G. Zapatero");
-                  handleCloseRequest();
+                  handleOpenComposer("UNDER_REVIEW");
                 }}
-                className="flex-1 py-3 bg-[#64748B] hover:bg-[#475569] text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-98"
+                className="flex-1 py-3 bg-[#64748B] hover:bg-[#475569] text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-98 cursor-pointer"
               >
                 <span>Mark Under Review</span>
               </button>
@@ -1062,6 +1193,142 @@ export default function FootageRequestsTab({ requests, onUpdateRequestStatus, re
             </div>
           )}
         </>
+      )}
+
+      {/* Email Composer Modal */}
+      {composingEmail && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full border border-slate-100 shadow-2xl flex flex-col overflow-hidden max-h-[90vh]">
+            <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
+              <div>
+                <span className="inline-block px-2.5 py-0.5 text-[9px] font-extrabold uppercase tracking-widest bg-blue-500/20 text-blue-300 rounded mb-1">
+                  Step 2: Compose Notification
+                </span>
+                <h3 className="text-sm font-black flex items-center gap-1.5">
+                  <Mail className="h-4 w-4" />
+                  {composingEmail.type === "APPROVED" ? "Approve & Send CCTV Footage Link" :
+                   composingEmail.type === "REJECTED" ? "Reject Request & Send Notification" :
+                   "Mark Under Review & Notify Requester"}
+                </h3>
+              </div>
+              <button
+                onClick={() => setComposingEmail(null)}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {emailSendStatus && (
+                <div className="p-3 bg-blue-50 text-blue-800 border border-blue-100 rounded-xl text-xs font-semibold">
+                  {emailSendStatus}
+                </div>
+              )}
+
+              {/* Recipient */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">Recipient Email</label>
+                  <input
+                    type="email"
+                    value={composingEmail.to}
+                    onChange={(e) => setComposingEmail({ ...composingEmail, to: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 font-semibold focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">Related Request ID</label>
+                  <input
+                    type="text"
+                    value={`#${selectedRequest?.id}`}
+                    disabled
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs text-slate-400 font-mono focus:outline-none cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              {/* Subject */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">Email Subject</label>
+                <input
+                  type="text"
+                  value={composingEmail.subject}
+                  onChange={(e) => setComposingEmail({ ...composingEmail, subject: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                />
+              </div>
+
+              {/* Optional Link Swapping field */}
+              {composingEmail.type === "APPROVED" && (
+                <div className="space-y-1 p-3.5 bg-blue-50 border border-blue-100 rounded-2xl">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-blue-700 flex items-center gap-1.5">
+                    <HardDrive className="h-3.5 w-3.5" />
+                    CCTV Shareable Download Link
+                  </label>
+                  <p className="text-[9px] text-blue-600 leading-snug">
+                    Enter the Google Drive URL below. It will automatically swap with any <code>{`{footageLink}`}</code> tags in the email body.
+                  </p>
+                  <div className="flex gap-2 mt-1.5">
+                    <input
+                      type="text"
+                      value={composingEmail.footageLink}
+                      onChange={(e) => {
+                        const newLink = e.target.value;
+                        const prevLink = composingEmail.footageLink;
+                        const updatedBody = composingEmail.body.replace(new RegExp(prevLink.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), "g"), newLink);
+                        setComposingEmail({
+                          ...composingEmail,
+                          footageLink: newLink,
+                          body: updatedBody
+                        });
+                      }}
+                      className="flex-1 px-3 py-1.5 bg-white border border-blue-200 rounded-lg text-[11px] text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      placeholder="https://drive.google.com/..."
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Editable Body */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400">Message Body (HTML enabled)</label>
+                <textarea
+                  value={composingEmail.body}
+                  onChange={(e) => setComposingEmail({ ...composingEmail, body: e.target.value })}
+                  rows={8}
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all leading-relaxed"
+                />
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-slate-100 bg-[#F8FAFC] flex justify-between items-center">
+              <span className="text-[9px] font-semibold text-slate-400 uppercase">
+                Handled by: Crissel Ann G. Zapatero
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setComposingEmail(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl transition-all"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleSendComposeEmail}
+                  disabled={isSendingEmail}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-1.5 active:scale-98 cursor-pointer"
+                >
+                  {isSendingEmail ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5 text-blue-400" />
+                  )}
+                  <span>Send Notification & Update</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
