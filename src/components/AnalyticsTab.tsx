@@ -30,8 +30,7 @@ import {
   Save,
   FileText,
   Filter,
-  Check,
-  HardDrive
+  Check
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -50,7 +49,6 @@ import { parseTrafficCSV, ParsedTrafficData, Snapshot } from "../utils/csvParser
 import { SAMPLE_TRAFFIC_CSV } from "../utils/sampleData";
 import { getFirebaseInstances, getFirebaseConfig } from "../firebase";
 import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy } from "firebase/firestore";
-import GoogleDriveTab from "./GoogleDriveTab";
 
 interface UnifiedLedger {
   filename: string;
@@ -78,7 +76,7 @@ export default function AnalyticsTab() {
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [activeChartTab, setActiveChartTab] = useState<"vol" | "dens" | "dist">("vol");
-  const [subTab, setSubTab] = useState<"explorer" | "hub" | "gdrive">("explorer");
+  const [subTab, setSubTab] = useState<"explorer" | "hub">("explorer");
   const [localLedgers, setLocalLedgers] = useState<UnifiedLedger[]>([]);
   const [cloudLedgers, setCloudLedgers] = useState<UnifiedLedger[]>([]);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
@@ -731,19 +729,6 @@ export default function AnalyticsTab() {
             )}
           </div>
         </button>
-        <button
-          onClick={() => setSubTab("gdrive")}
-          className={`px-5 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
-            subTab === "gdrive"
-              ? "border-[#4E6290] text-[#4E6290]"
-              : "border-transparent text-slate-500 hover:text-slate-800"
-          }`}
-        >
-          <div className="flex items-center gap-1.5">
-            <HardDrive className="h-4 w-4" />
-            <span>Cloud Archive</span>
-          </div>
-        </button>
       </div>
 
       {subTab === "hub" ? (
@@ -1017,8 +1002,6 @@ export default function AnalyticsTab() {
             )}
           </div>
         </div>
-      ) : subTab === "gdrive" ? (
-        <GoogleDriveTab />
       ) : (
         /* STANDARD CHARTS AND REPLAY TAB */
         <>

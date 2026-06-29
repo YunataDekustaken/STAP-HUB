@@ -7,6 +7,7 @@ import FootageRequestsTab, { FootageRequest } from "./components/FootageRequests
 import IncidentReportsTab, { IncidentReport } from "./components/IncidentReportsTab";
 import AnnouncementsTab, { Announcement } from "./components/AnnouncementsTab";
 import AnalyticsTab from "./components/AnalyticsTab";
+import GoogleDriveTab from "./components/GoogleDriveTab";
 import PublicDataRequest from "./components/PublicDataRequest";
 import PublicIncidentReport from "./components/PublicIncidentReport";
 import SettingsTab from "./components/SettingsTab";
@@ -1092,6 +1093,10 @@ export default function App() {
 
             {activeTab === "ANALYTICS" && isAdmin && (
               <AnalyticsTab />
+            )}
+            
+            {activeTab === "CLOUD_ARCHIVE" && isAdmin && (
+              <GoogleDriveTab />
             )}
 
             {/* Public-only Tabs */}

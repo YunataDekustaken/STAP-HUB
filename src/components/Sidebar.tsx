@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutDashboard, Video, FileText, ShieldAlert, Megaphone, User, AlertTriangle, Settings, BarChart3 } from "lucide-react";
+import { LayoutDashboard, Video, FileText, ShieldAlert, Megaphone, User, AlertTriangle, Settings, BarChart3, HardDrive } from "lucide-react";
 import stapLogo from "../../assets/stap-logo.png";
 
 export type SidebarTab =
@@ -9,6 +9,7 @@ export type SidebarTab =
   | "INCIDENT_REPORTS"
   | "ANNOUNCEMENTS"
   | "ANALYTICS"
+  | "CLOUD_ARCHIVE"
   | "DATA_REQUEST"
   | "INCIDENT_REPORT"
   | "SETTINGS";
@@ -52,6 +53,11 @@ export default function Sidebar({ activeTab, onTabChange, isAdmin, onLoginClick 
       id: "ANALYTICS" as const,
       label: "Analytics",
       icon: BarChart3,
+    },
+    {
+      id: "CLOUD_ARCHIVE" as const,
+      label: "Cloud Archive",
+      icon: HardDrive,
     },
     {
       id: "SETTINGS" as const,
